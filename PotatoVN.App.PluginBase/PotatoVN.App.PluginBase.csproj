@@ -1,0 +1,247 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>PotatoVN.App.PluginBase</RootNamespace>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <EnableCoreFrameworkTracking>false</EnableCoreFrameworkTracking>
+    <!--TODO：请务必修改AssemblyName你的插件Id一致，避免和其他插件冲突-->
+    <!--TODO：命名规则A{id}，如A78f4ca27-7ffb-43b2-a5a5-111111db096d-->
+    <AssemblyName>A78f4ca27-7ffb-43b2-a5a5-111111db096d</AssemblyName>
+    <!-- 要处理该警告需要用到.Net Preview的特性，等特性稳定（进入正式版）后再处理 -->
+    <NoWarn>MVVMTK0045</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PluginNamespaceToStamp>PotatoVN.App.PluginBase</PluginNamespaceToStamp>
+  </PropertyGroup>
+
+  <UsingTask TaskName="StampPluginNamespaceItems" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SourceFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <ProjectDirectory ParameterType="System.String" Required="true" />
+      <DestinationDirectory ParameterType="System.String" Required="true" />
+      <OldNamespace ParameterType="System.String" Required="true" />
+      <NewNamespace ParameterType="System.String" Required="true" />
+      <StampedFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text" />
+      <Using Namespace="Microsoft.Build.Framework" />
+      <Using Namespace="Microsoft.Build.Utilities" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+var stampedFiles = new List<ITaskItem>();
+
+var projectRoot = Path.GetFullPath(ProjectDirectory);
+if (!projectRoot.EndsWith(Path.DirectorySeparatorChar.ToString()) && !projectRoot.EndsWith(Path.AltDirectorySeparatorChar.ToString()))
+{
+    projectRoot += Path.DirectorySeparatorChar;
+}
+
+var destinationRoot = Path.GetFullPath(DestinationDirectory);
+foreach (var sourceFile in SourceFiles)
+{
+    var sourcePath = sourceFile.GetMetadata("FullPath");
+    if (string.IsNullOrWhiteSpace(sourcePath))
+    {
+        sourcePath = sourceFile.ItemSpec;
+    }
+
+    sourcePath = Path.GetFullPath(sourcePath);
+    if (!sourcePath.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase))
+    {
+        Log.LogWarning($"Skipping namespace stamping for file outside project directory: {sourcePath}");
+        continue;
+    }
+
+    var relativePath = sourcePath.Substring(projectRoot.Length);
+    var destinationPath = Path.Combine(destinationRoot, relativePath);
+    var destinationParent = Path.GetDirectoryName(destinationPath);
+    if (!string.IsNullOrEmpty(destinationParent))
+    {
+        Directory.CreateDirectory(destinationParent);
+    }
+
+    var content = File.ReadAllText(sourcePath);
+    content = content.Replace(OldNamespace, NewNamespace);
+    File.WriteAllText(destinationPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+    var stampedFile = new TaskItem(destinationPath);
+    sourceFile.CopyMetadataTo(stampedFile);
+    stampedFile.SetMetadata("OriginalIdentity", sourceFile.ItemSpec);
+    stampedFile.SetMetadata("OriginalRelativePath", relativePath);
+    stampedFile.SetMetadata("Link", relativePath);
+    stampedFiles.Add(stampedFile);
+}
+
+StampedFiles = stampedFiles.ToArray();
+]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="_StampPluginNamespace" BeforeTargets="MarkupCompilePass1;CoreCompile;CheckForDuplicatePageItems;AddProcessedXamlFilesToCopyLocal;AddXamlFilesToNugetPackage" Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <_PluginStampedNamespace>$(PluginNamespaceToStamp).Stamped_$([System.Guid]::NewGuid().ToString(&quot;N&quot;))</_PluginStampedNamespace>
+      <_PluginStampRoot>$(IntermediateOutputPath)Stamped\</_PluginStampRoot>
+      <RootNamespace>$(_PluginStampedNamespace)</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_PluginStampCompile Include="@(Compile)" Condition="'%(Compile.Extension)' == '.cs'" />
+      <_PluginStampPage Include="@(Page)" Condition="'%(Page.Extension)' == '.xaml'" />
+      <_PluginStampSource Include="@(_PluginStampCompile);@(_PluginStampPage)" />
+    </ItemGroup>
+
+    <RemoveDir Directories="$(_PluginStampRoot)" />
+
+    <StampPluginNamespaceItems SourceFiles="@(_PluginStampSource)"
+                               ProjectDirectory="$(MSBuildProjectDirectory)\"
+                               DestinationDirectory="$(_PluginStampRoot)"
+                               OldNamespace="$(PluginNamespaceToStamp)"
+                               NewNamespace="$(_PluginStampedNamespace)">
+      <Output TaskParameter="StampedFiles" ItemName="_PluginStampedFiles" />
+    </StampPluginNamespaceItems>
+
+    <ItemGroup>
+      <Compile Remove="@(_PluginStampCompile)" />
+      <Page Remove="@(_PluginStampPage)" />
+      <Resource Remove="@(_PluginStampPage)" />
+
+      <Compile Include="@(_PluginStampedFiles)" Condition="'%(_PluginStampedFiles.Extension)' == '.cs'" />
+      <Page Include="@(_PluginStampedFiles)" Condition="'%(_PluginStampedFiles.Extension)' == '.xaml'" />
+      <Resource Include="@(_PluginStampedFiles)" Condition="'%(_PluginStampedFiles.Extension)' == '.xaml'" />
+    </ItemGroup>
+
+    <Message Importance="High" Text="Plugin namespace stamped to: $(_PluginStampedNamespace)" />
+  </Target>
+
+  <Target Name="_DeleteGeneratedXamlTypeInfo" AfterTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Delete Files="$(IntermediateOutputPath)XamlTypeInfo.g.cs" TreatErrorsAsWarnings="true" />
+  </Target>
+
+  <ItemGroup>
+    <None Remove="Controls\ExamplePage.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" Version="1.3.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4948">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.1.3">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\PotatoVN\GalgameManager.WinApp.Base\GalgameManager.WinApp.Base.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Remove="artifacts\plugin.pvnplugin\PotatoVN.App.PluginBase\Controls\UserControl1.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Update="Controls\ExamplePage.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <None Update="Strings\en-US.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Strings\ja-JP.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Strings\zh-CN.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <Page Remove="Controls\Styles\PluginResources.xaml" />
+  </ItemGroup>
+
+
+    <!--
+    打包插件：
+    - 仅在 Release 配置下执行
+    - 从编译输出目录复制文件到临时目录
+    - 删除共享程序集黑名单中的 DLL
+    - 使用 PowerShell 压缩为 zip 输出到 artifacts 目录
+  -->
+	<Target Name="PackPlugin" AfterTargets="Build" Condition="'$(Configuration)'=='Release'">
+		<PropertyGroup>
+			<_PluginSourceDir>$(TargetDir)</_PluginSourceDir>
+			<_PluginTempDir>$(IntermediateOutputPath)PluginPack\</_PluginTempDir>
+            <PluginPackageOutputDir>artifacts</PluginPackageOutputDir>
+            <PluginPackageFileName>plugin.pvnplugin.zip</PluginPackageFileName>
+            <_PluginPackageFullPath>$(PluginPackageOutputDir)\$(PluginPackageFileName)</_PluginPackageFullPath>
+		</PropertyGroup>
+
+		<!-- 清理并创建临时目录 -->
+		<RemoveDir Directories="$(_PluginTempDir)" />
+		<MakeDir Directories="$(_PluginTempDir)" />
+
+		<!-- 把编译输出全部复制到临时目录 -->
+		<ItemGroup>
+			<_PluginSourceFiles Include="$(_PluginSourceDir)**\*.*" />
+		</ItemGroup>
+
+		<Copy SourceFiles="@(_PluginSourceFiles)" DestinationFiles="@(_PluginSourceFiles->'$(_PluginTempDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+
+		<!-- 共享程序集黑名单：在临时目录中删除这些 DLL -->
+		<ItemGroup>
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)0Harmony.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.WinUI.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.WindowsAppRuntime.Bootstrap.Net.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.SDK.NET.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)WinRT.Runtime.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Graphics.Imaging.Projection.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Web.WebView2.Core.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AppLifecycle.Projection.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AppNotifications.Projection.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.System.Projection.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)CommunityToolkit.Common.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)CommunityToolkit.Mvvm.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)CommunityToolkit.WinUI.Collections.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)CommunityToolkit.WinUI.Extensions.dll" />
+			<_PluginBlacklistFiles Include="$(_PluginTempDir)CommunityToolkit.WinUI.Helpers.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)LiteDB.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.InteractiveExperiences.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Security.Authentication.OAuth.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Web.WebView2.Core.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AI.ContentSafety.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AI.Foundation.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AI.Imaging.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AI.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AI.Text.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.ApplicationModel.Background.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.ApplicationModel.DynamicDependency.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.ApplicationModel.Resources.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.ApplicationModel.WindowsAppRuntime.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.AppNotifications.Builder.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.BadgeNotifications.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Foundation.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Management.Deployment.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Media.Capture.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.PushNotifications.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Security.AccessControl.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Storage.Pickers.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Storage.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.System.Power.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Microsoft.Windows.Widgets.Projection.dll" />
+            <_PluginBlacklistFiles Include="$(_PluginTempDir)Newtonsoft.Json.dll" />
+		</ItemGroup>
+
+		<Delete Files="@(_PluginBlacklistFiles)" />
+        <RemoveDir Directories="$(_PluginTempDir)runtimes" />
+
+		<!-- 确保打包输出目录存在 -->
+		<MakeDir Directories="$(PluginPackageOutputDir)" />
+
+		<!-- 使用 PowerShell 压缩为 zip -->
+		<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(_PluginTempDir)*' -DestinationPath '$(PluginPackageOutputDir)\$(PluginPackageFileName)' -Force&quot;" />
+
+        <Message Importance="High" Text="Plugin package created at: $(_PluginPackageFullPath)" />
+	</Target>
+</Project>

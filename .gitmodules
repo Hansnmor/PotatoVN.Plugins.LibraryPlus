@@ -1,0 +1,4 @@
+[submodule "PotatoVN"]
+	path = PotatoVN
+	url = https://github.com/GoldenPotato137/PotatoVN.git
+	branch = dev

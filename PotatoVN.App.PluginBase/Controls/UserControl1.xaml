@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="PotatoVN.App.PluginBase.Controls.UserControl1"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:prefabs="using:PotatoVN.App.PluginBase.Controls.Prefabs"
+    mc:Ignorable="d">
+
+    <prefabs:StdStackPanel HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                           Margin="{ThemeResource SmallBottomMargin}">
+        <prefabs:Panel>
+            <StackPanel Spacing="10" Padding="20">
+                <TextBlock FontSize="24" Text="大家好，我是插件！" />
+                <TextBlock Text="这是一个来自外部DLL的用户控件。" />
+                <Button x:Name="Button" Content="Hello World!" Click="ButtonBase_OnClick"/>
+            </StackPanel>
+        </prefabs:Panel>
+        
+        <prefabs:Panel>
+            <prefabs:Setting Title="推荐用这个控件来当作设置控件" Description="这是该设置的描述">
+                <ToggleSwitch IsOn="{x:Bind _data.TestBool, Mode=TwoWay}"/>
+            </prefabs:Setting>
+        </prefabs:Panel>
+    </prefabs:StdStackPanel>
+</UserControl>

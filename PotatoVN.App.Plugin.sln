@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36401.2
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PotatoVN.App.PluginBase", "PotatoVN.App.PluginBase\PotatoVN.App.PluginBase.csproj", "{AC8FD28C-1EFE-495F-ACDF-9D01D095B672}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GalgameManager.WinApp.Base", "PotatoVN\GalgameManager.WinApp.Base\GalgameManager.WinApp.Base.csproj", "{973AE514-2A71-1050-901C-24D5384AFADC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{AC8FD28C-1EFE-495F-ACDF-9D01D095B672}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AC8FD28C-1EFE-495F-ACDF-9D01D095B672}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AC8FD28C-1EFE-495F-ACDF-9D01D095B672}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AC8FD28C-1EFE-495F-ACDF-9D01D095B672}.Release|Any CPU.Build.0 = Release|Any CPU
+		{973AE514-2A71-1050-901C-24D5384AFADC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{973AE514-2A71-1050-901C-24D5384AFADC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{973AE514-2A71-1050-901C-24D5384AFADC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{973AE514-2A71-1050-901C-24D5384AFADC}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {36EA334B-73C6-4EE7-AA43-3EBCE36DFEFC}
+	EndGlobalSection
+EndGlobal
