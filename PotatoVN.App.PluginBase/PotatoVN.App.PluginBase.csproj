@@ -8,9 +8,8 @@
     <Nullable>enable</Nullable>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableCoreFrameworkTracking>false</EnableCoreFrameworkTracking>
-    <!--TODO：请务必修改AssemblyName你的插件Id一致，避免和其他插件冲突-->
-    <!--TODO：命名规则A{id}，如A78f4ca27-7ffb-43b2-a5a5-111111db096d-->
-    <AssemblyName>A78f4ca27-7ffb-43b2-a5a5-111111db096d</AssemblyName>
+    <!--命名规则A{id}，与插件Id一致，避免和其他插件冲突-->
+    <AssemblyName>A70ee3f8a-361a-450a-acff-5371e85808b4</AssemblyName>
     <!-- 要处理该警告需要用到.Net Preview的特性，等特性稳定（进入正式版）后再处理 -->
     <NoWarn>MVVMTK0045</NoWarn>
   </PropertyGroup>
@@ -126,10 +125,8 @@ StampedFiles = stampedFiles.ToArray();
   </Target>
 
   <ItemGroup>
-    <None Remove="Controls\ExamplePage.xaml" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.3.0" />
+    <PackageReference Include="CommunityToolkit.WinUI.Collections" Version="8.2.250402" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4948">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
@@ -143,12 +140,6 @@ StampedFiles = stampedFiles.ToArray();
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <Resource Remove="artifacts\plugin.pvnplugin\PotatoVN.App.PluginBase\Controls\UserControl1.xaml" />
-  </ItemGroup>
-  <ItemGroup>
-    <Page Update="Controls\ExamplePage.xaml">
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
     <None Update="Strings\en-US.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

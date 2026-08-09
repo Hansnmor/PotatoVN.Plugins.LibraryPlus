@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="PotatoVN.App.PluginBase.Controls.SortPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:GalgameManager.Models"
+    xmlns:prefabs="using:PotatoVN.App.PluginBase.Controls.Prefabs"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <!-- 游戏右键菜单（与原生游戏库页一致） -->
+        <MenuFlyout x:Name="GameFlyout" Opening="GameFlyout_Opening">
+            <MenuFlyoutSubItem Text="游玩状态">
+                <MenuFlyoutSubItem.Icon>
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74C;" />
+                </MenuFlyoutSubItem.Icon>
+                <RadioMenuFlyoutItem x:Name="StatusPlaying" Text="游玩中" GroupName="SortPagePlayStatus"
+                                     CommandParameter="Playing" Click="ChangePlayStatus_Click" />
+                <RadioMenuFlyoutItem x:Name="StatusPlayed" Text="已玩过" GroupName="SortPagePlayStatus"
+                                     CommandParameter="Played" Click="ChangePlayStatus_Click" />
+                <RadioMenuFlyoutItem x:Name="StatusShelved" Text="搁置" GroupName="SortPagePlayStatus"
+                                     CommandParameter="Shelved" Click="ChangePlayStatus_Click" />
+                <RadioMenuFlyoutItem x:Name="StatusAbandoned" Text="抛弃" GroupName="SortPagePlayStatus"
+                                     CommandParameter="Abandoned" Click="ChangePlayStatus_Click" />
+                <RadioMenuFlyoutItem x:Name="StatusWantToPlay" Text="想玩" GroupName="SortPagePlayStatus"
+                                     CommandParameter="WantToPlay" Click="ChangePlayStatus_Click" />
+            </MenuFlyoutSubItem>
+            <MenuFlyoutItem Icon="Edit" Text="编辑游戏信息" Click="EditGame_Click" />
+            <MenuFlyoutItem Icon="Download" Text="下载游戏信息" Click="FetchInfo_Click" />
+            <MenuFlyoutItem Icon="OpenLocal" Text="在文件管理器中打开" x:Name="OpenInExplorerItem" Click="OpenInExplorer_Click" />
+            <MenuFlyoutItem Icon="Delete" Text="从游戏库删除" Click="RemoveGame_Click" />
+        </MenuFlyout>
+    </Page.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 工具栏：排序（唯一与原页面的差异） -->
+        <CommandBar Grid.Row="0" DefaultLabelPosition="Right">
+            <AppBarButton Icon="Sort" Label="排序">
+                <AppBarButton.Flyout>
+                    <MenuFlyout>
+                        <RadioMenuFlyoutItem x:Name="ConditionDefault" Text="默认顺序" GroupName="SortCondition"
+                                             CommandParameter="Default" Click="SetCondition_Click" />
+                        <RadioMenuFlyoutItem x:Name="ConditionExpected" Text="按预计时长" GroupName="SortCondition"
+                                             CommandParameter="Expected" Click="SetCondition_Click" />
+                        <MenuFlyoutSeparator />
+                        <ToggleMenuFlyoutItem x:Name="DescendingItem" Text="降序" Click="ToggleDescending_Click" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+            <!-- 排除已玩过状态（默认不启用） -->
+            <AppBarToggleButton x:Name="HidePlayedToggle" Icon="Filter" Label="排除已玩过"
+                                IsChecked="False" Checked="HidePlayedToggle_OnChanged" Unchecked="HidePlayedToggle_OnChanged" />
+            <CommandBar.Content>
+                <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"
+                           Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />
+            </CommandBar.Content>
+        </CommandBar>
+
+        <!-- 游戏网格（与原生一致的卡片尺寸与自适应布局） -->
+        <GridView
+            Grid.Row="1" x:Name="GameGridView"
+            IsItemClickEnabled="True"
+            SelectionMode="None"
+            IsMultiSelectCheckBoxEnabled="False"
+            ItemClick="GameGridView_ItemClick">
+            <GridView.ItemTemplate>
+                <DataTemplate x:DataType="models:Galgame">
+                    <prefabs:GalgamePrefab
+                        Galgame="{x:Bind}"
+                        PlayTypeVisibility="Visible"
+                        Flyout="{StaticResource GameFlyout}" />
+                </DataTemplate>
+            </GridView.ItemTemplate>
+        </GridView>
+    </Grid>
+</Page>

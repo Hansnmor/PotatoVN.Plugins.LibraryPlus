@@ -2,36 +2,45 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using GalgameManager.WinApp.Base.Contracts;
-using GalgameManager.WinApp.Base.Contracts.PluginUi;
 using GalgameManager.WinApp.Base.Models;
 using PotatoVN.App.PluginBase.Helper;
 using PotatoVN.App.PluginBase.Models;
 
-//todo: 请修改PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj中的AssemblyName
 namespace PotatoVN.App.PluginBase
 {
-    public partial class Plugin : IPlugin, IPluginSetting
+    public partial class Plugin : IPlugin
     {
         public static IPotatoVnApi HostApi { get; private set; } = null!;
+
+        /// <summary>插件数据（SortPage 等无插件实例上下文的位置读取用）</summary>
+        internal static PluginData Data { get; private set; } = new();
+
+        /// <summary>插件元信息（静态副本，供 SidebarSelectionHelper 等无实例上下文的位置使用）</summary>
+        internal static PluginInfo StaticInfo { get; } = new()
+        {
+            Id = new Guid("70ee3f8a-361a-450a-acff-5371e85808b4"),
+            Name = "更多排序条件",
+            Description = "提供独立的游戏排序页面，支持按预计时长排序（升序/降序），不影响游戏库原生排序。",
+        };
+
+        private PluginData _data = new();
         private IPotatoVnApi _hostApi = null!;
-        private PluginData _data = new ();
-        
+
         public PluginInfo Info { get; } = new()
         {
-            //todo: 请务必随机生成一个新的Guid，切勿使用这个示例Guid，否则可能会和其他使用了同一Guid的插件发生冲突
-            Id = new Guid("78f4ca27-7ffb-43b2-a5a5-111111db096d"), 
-            Name = "插件示例",
-            Description = "这是一个示范插件！\n这是第二行描述",
+            Id = new Guid("70ee3f8a-361a-450a-acff-5371e85808b4"),
+            Name = "更多排序条件",
+            Description = "提供独立的游戏排序页面，支持按预计时长排序（升序/降序），不影响游戏库原生排序。",
         };
 
         public async Task InitializeAsync(IPotatoVnApi hostApi)
         {
             _hostApi = hostApi;
             HostApi = hostApi;
-            XamlResourceLocatorFactory.PackagePath = _hostApi.GetPluginPath();
-            PluginLocalization.Initialize(hostApi); //初始化插件多国语言支持，如果你的插件不需要支持多语言，可以不调用这个方法，直接在代码里写死字符串即可。
-            ResourceLoader.Initialize(); //初始化XAML字典加载器，资源用法请参考ResourceLoader类的注释
-            var dataJson = await _hostApi.GetDataAsync();
+            XamlResourceLocatorFactory.PackagePath = hostApi.GetPluginPath();
+            ResourceLoader.Initialize(); //加载XAML样式资源（SortPage / GalgamePrefab 使用）
+
+            var dataJson = await hostApi.GetDataAsync();
             if (!string.IsNullOrWhiteSpace(dataJson))
             {
                 try
@@ -43,21 +52,23 @@ namespace PotatoVN.App.PluginBase
                     _data = new PluginData();
                 }
             }
-            _data.PropertyChanged += (_, _) => SaveData(); // 当Observable属性变化时自动保存数据，对于普通属性请手动调用SaveData
+            Data = _data;
+            _data.PropertyChanged += (_, _) => SaveData(); // Observable属性变化时自动保存
+
             InitUi();
         }
-        
+
         public Task OnUninstallAsync(bool deleteData, Action<TimeSpan> extendWaitHandler, CancellationToken cts)
         {
             if (cts.IsCancellationRequested) return Task.FromCanceled(cts);
             ResourceLoader.Unload(); // 卸载XAML资源字典
             return Task.CompletedTask;
         }
-        
+
         private void SaveData()
         {
             var dataJson = System.Text.Json.JsonSerializer.Serialize(_data);
-            _ = _hostApi.SaveDataAsync(dataJson);
+            _ = HostApi.SaveDataAsync(dataJson);
         }
 
         protected Guid Id => Info.Id;
