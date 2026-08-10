@@ -65,11 +65,11 @@ public static class GalgameClassifier
     }
 
     /// <summary>
-    /// 拔作强信号：
+    /// 拔作强信号（命中即归拔作，即使同时有萌/剧情标签）：
     /// 1) 硬核 R18 行为词（nukige/凌辱/触手/调教/轮奸/双飞 等）直接命中；
-    /// 2) 萝莉/幼女等角色属性词**仅当同时带显式拔作标签**（拔作/实用/萌拔…）才算强信号——
-    ///    夜羊社（loli-nukige）有拔作标签归拔作，而 FAVORITE 红瞳世界等含萝莉/幼女角色的纯爱剧情作
-    ///    无拔作标签则不受影响（曾因 幼女/萝莉 单独命中误伤 映入红瞳的世界，2026-08-10 修正）。
+    /// 2) 萝莉/幼女属性词 + 显式拔作标签（loli-nukige，如夜羊社）；
+    /// 3) 成熟题材词（人妻/母系/熟女/母）+ 显式拔作标签（中信号，用户确认 2026-08-10）——
+    ///    Mama×Holic 等母系拔作归拔作，而甜蜜女友2（校园/妹，无成熟题材词）不受影响。
     /// </summary>
     private static bool HasStrongNukigeSignal(List<string> tags)
     {
@@ -77,6 +77,8 @@ public static class GalgameClassifier
             return true;
         if (ContainsAnyAny(tags, HardNukigeKeywords)) return true;
         if (ContainsAnyAny(tags, LoliAttributeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords))
+            return true;
+        if (ContainsAnyAny(tags, MatureThemeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords))
             return true;
         return false;
     }
@@ -123,6 +125,13 @@ public static class GalgameClassifier
     private static readonly string[] LoliAttributeKeywords =
     {
         "萝莉", "幼女", "loli",
+    };
+
+    /// <summary>成熟题材词（中信号）：人妻/母系/熟女等题材在 galgame 中压倒性偏拔作向，
+    /// 与显式拔作标签组合时归拔作（如 Mama×Holic 母系拔作）；甜蜜女友2 等校园/妹题材不受影响</summary>
+    private static readonly string[] MatureThemeKeywords =
+    {
+        "人妻", "母系", "熟女", "母",
     };
 
     /// <summary>显式拔作标签：与萝莉/幼女组合可构成强信号；单独出现是弱信号（萌拔常见）</summary>
