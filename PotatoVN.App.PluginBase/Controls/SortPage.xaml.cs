@@ -42,6 +42,7 @@ public sealed partial class SortPage : Page
 
         // 恢复持久化的页面状态（跨页面重建 / 应用重启保持）
         RestoreRangeState();
+        RestoreCategoryState();
         RestoreSortMenuState();
         ApplySort();
         UpdateCountText();
@@ -191,6 +192,9 @@ public sealed partial class SortPage : Page
     private const string FilterModeToPlay = "ToPlay";
     private const string FilterModeCustom = "Custom";
 
+    /// <summary>内容分类筛选键：All=全部</summary>
+    private const string CategoryKeyAll = "All";
+
     /// <summary>「筛选」弹出层打开时，同步预设单选与状态勾选态（仅在自定义模式下显示勾选）</summary>
     private void FilterMenu_Opening(object sender, object e)
     {
@@ -263,7 +267,36 @@ public sealed partial class SortPage : Page
     {
         if (obj is not Galgame game) return false;
         if (!MatchesPlayTypeFilter(game)) return false;
+        if (!MatchesCategory(game)) return false;
         return MatchesRange(game);
+    }
+
+    /// <summary>内容分类匹配（萌作/剧情作/拔作/同人作/其他），All=全部；与时长区间、状态筛选 AND 联动</summary>
+    private bool MatchesCategory(Galgame game)
+    {
+        string key = Plugin.Data.CategoryKey;
+        if (key == CategoryKeyAll) return true;
+        return GalgameClassifier.Classify(game).ToString() == key;
+    }
+
+    /// <summary>内容分类按钮点击：持久化并刷新列表与统计</summary>
+    private void Category_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton rb || rb.Tag is not string key) return;
+        Plugin.Data.CategoryKey = key; // 持久化
+        RefreshFilter();
+    }
+
+    /// <summary>从持久化数据恢复内容分类按钮选中状态</summary>
+    private void RestoreCategoryState()
+    {
+        string key = Plugin.Data.CategoryKey;
+        CategoryAll.IsChecked = key == CategoryKeyAll;
+        CategoryMoe.IsChecked = key == "Moe";
+        CategoryStory.IsChecked = key == "Story";
+        CategoryNukige.IsChecked = key == "Nukige";
+        CategoryDoujin.IsChecked = key == "Doujin";
+        CategoryOther.IsChecked = key == "Other";
     }
 
     /// <summary>

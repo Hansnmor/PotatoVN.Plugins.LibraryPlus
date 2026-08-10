@@ -31,6 +31,9 @@ public partial class PluginData : ObservableRecipient
     /// <summary>次排序键是否降序</summary>
     [ObservableProperty] private bool _secondaryDescending;
 
-    /// <summary>时长区间筛选键（All=全部/Under10/10to20/20to40/Over40，默认全部）</summary>
+    /// <summary>时长区间筛选键（All=全部/Under10/10to20/20to40/Over40/Unknown，默认全部）</summary>
     [ObservableProperty] private string _rangeKey = "All";
+
+    /// <summary>内容分类筛选键（All=全部/Moe/Story/Nukige/Doujin/Other，默认全部）</summary>
+    [ObservableProperty] private string _categoryKey = "All";
 }

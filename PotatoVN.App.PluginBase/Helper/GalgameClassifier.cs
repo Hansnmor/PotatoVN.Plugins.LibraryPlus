@@ -38,10 +38,10 @@ public static class GalgameClassifier
 
     public static string GetDisplayName(GalgameCategory category) => category switch
     {
-        GalgameCategory.Moe => "萌",
-        GalgameCategory.Story => "剧情",
-        GalgameCategory.Nukige => "拔",
-        GalgameCategory.Doujin => "同人",
+        GalgameCategory.Moe => "萌作",
+        GalgameCategory.Story => "剧情作",
+        GalgameCategory.Nukige => "拔作",
+        GalgameCategory.Doujin => "同人作",
         _ => "其他",
     };
 
