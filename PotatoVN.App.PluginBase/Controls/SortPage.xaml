@@ -116,6 +116,10 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
             <!-- 区间按钮组：<10h 短篇小品 / 10-20h 单线 / 20-40h 中等 / >40h 长篇 -->
             <!-- 注意：不要在 XAML 里给 RadioButton 写 IsChecked 字面量（插件 LoadComponent 路径下
@@ -144,6 +148,10 @@
                 <TextBlock x:Name="ProgressText" Style="{ThemeResource BodyTextStyle}" />
                 <TextBlock x:Name="UnknownTimeText" Style="{ThemeResource BodyTextStyle}" />
             </StackPanel>
+
+            <!-- 内容分类统计（萌/剧情/拔/同人/其他，跟随当前可见列表） -->
+            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" x:Name="CategoryStatsText"
+                       Style="{ThemeResource BodyTextStyle}" Margin="0,6,0,0" />
         </Grid>
 
         <!-- 游戏网格（与原生一致的卡片尺寸与自适应布局） -->

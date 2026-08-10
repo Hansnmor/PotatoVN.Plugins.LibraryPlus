@@ -343,11 +343,15 @@ public sealed partial class SortPage : Page
     {
         long totalMinutes = 0;
         int unknown = 0;
+        var categoryCounts = new Dictionary<GalgameCategory, int>();
         foreach (Galgame g in _source.OfType<Galgame>())
         {
             long? minutes = ExpectedPlayTimeHelper.ParseMinutes(g.ExpectedPlayTime?.Value);
             if (minutes is null) unknown++;
             else totalMinutes += minutes.Value;
+
+            GalgameCategory cat = GalgameClassifier.Classify(g);
+            categoryCounts[cat] = categoryCounts.GetValueOrDefault(cat) + 1;
         }
         TotalTimeText.Text = $"待玩总时长：{ExpectedPlayTimeHelper.FormatHours(totalMinutes)}";
 
@@ -355,6 +359,12 @@ public sealed partial class SortPage : Page
         ProgressText.Text = $"完成度：{played}/{_source.Source.Count}";
 
         UnknownTimeText.Text = $"{unknown} 款时长未知";
+
+        // 内容分类：萌/剧情/拔/同人/其他
+        string[] order = { nameof(GalgameCategory.Moe), nameof(GalgameCategory.Story), nameof(GalgameCategory.Nukige),
+            nameof(GalgameCategory.Doujin), nameof(GalgameCategory.Other) };
+        CategoryStatsText.Text = string.Join(" · ",
+            order.Select(key => $"{GalgameClassifier.GetDisplayName(Enum.Parse<GalgameCategory>(key))} {categoryCounts.GetValueOrDefault(Enum.Parse<GalgameCategory>(key))}"));
     }
 
     #endregion
