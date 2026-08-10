@@ -82,7 +82,7 @@
                  避免插件 LoadComponent 下 IsChecked 字面量解析失败） -->
             <AppBarButton Icon="Filter" Label="筛选">
                 <AppBarButton.Flyout>
-                    <MenuFlyout Opening="FilterMenu_Opening">
+                    <MenuFlyout Opening="FilterMenu_Opening" Closing="FilterMenu_Closing">
                         <!-- 快捷预设 -->
                         <RadioMenuFlyoutItem x:Name="FilterAll" Text="全部" GroupName="SortPageFilter"
                                              CommandParameter="All" Click="FilterPreset_Click" />

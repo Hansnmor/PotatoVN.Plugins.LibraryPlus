@@ -191,7 +191,7 @@ public sealed partial class SortPage : Page
     private const string FilterModeToPlay = "ToPlay";
     private const string FilterModeCustom = "Custom";
 
-    /// <summary>「筛选」菜单打开时，同步预设单选与状态勾选态</summary>
+    /// <summary>「筛选」菜单打开时，同步预设单选与状态勾选态（仅在自定义模式下显示勾选）</summary>
     private void FilterMenu_Opening(object sender, object e)
     {
         string mode = Plugin.Data.FilterMode;
@@ -199,24 +199,42 @@ public sealed partial class SortPage : Page
         FilterToPlay.IsChecked = mode == FilterModeToPlay;
         FilterCustom.IsChecked = mode == FilterModeCustom;
 
+        // 只有自定义模式才显示状态勾选；全部/待玩模式下勾选标记保持清除
+        // （自定义选择数据保留，切回自定义可恢复）
+        bool showTicks = mode == FilterModeCustom;
         List<string> included = Plugin.Data.IncludedPlayTypes;
-        IncludeNone.IsChecked = included.Contains("None");
-        IncludePlaying.IsChecked = included.Contains("Playing");
-        IncludePlayed.IsChecked = included.Contains("Played");
-        IncludeShelved.IsChecked = included.Contains("Shelved");
-        IncludeAbandoned.IsChecked = included.Contains("Abandoned");
-        IncludeWantToPlay.IsChecked = included.Contains("WantToPlay");
+        IncludeNone.IsChecked = showTicks && included.Contains("None");
+        IncludePlaying.IsChecked = showTicks && included.Contains("Playing");
+        IncludePlayed.IsChecked = showTicks && included.Contains("Played");
+        IncludeShelved.IsChecked = showTicks && included.Contains("Shelved");
+        IncludeAbandoned.IsChecked = showTicks && included.Contains("Abandoned");
+        IncludeWantToPlay.IsChecked = showTicks && included.Contains("WantToPlay");
     }
+
+    /// <summary>「筛选」菜单关闭时统一应用筛选（自定义模式允许一次勾选多个状态后再生效）</summary>
+    private void FilterMenu_Closing(Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase sender,
+        Microsoft.UI.Xaml.Controls.Primitives.FlyoutBaseClosingEventArgs args) => RefreshFilter();
 
     /// <summary>预设点击：全部 / 待玩 / 自定义</summary>
     private void FilterPreset_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not RadioMenuFlyoutItem item || item.CommandParameter is not string mode) return;
         Plugin.Data.FilterMode = mode; // 持久化
+        // 切到「全部/待玩」时立即清除下方勾选标记（数据保留，切回自定义可恢复）
+        if (mode != FilterModeCustom)
+        {
+            IncludeNone.IsChecked = false;
+            IncludePlaying.IsChecked = false;
+            IncludePlayed.IsChecked = false;
+            IncludeShelved.IsChecked = false;
+            IncludeAbandoned.IsChecked = false;
+            IncludeWantToPlay.IsChecked = false;
+        }
         RefreshFilter();
     }
 
-    /// <summary>自定义模式：勾选=只显示该状态；勾选时自动切到「自定义」模式</summary>
+    /// <summary>自定义模式：勾选=只显示该状态；勾选时自动切到「自定义」模式。
+    /// 不立即刷新——等菜单关闭时统一应用，支持一次勾选多个状态。</summary>
     private void FilterState_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleMenuFlyoutItem item || item.CommandParameter is not string playTypeName) return;
@@ -231,9 +249,11 @@ public sealed partial class SortPage : Page
             included.Remove(playTypeName);
         }
         Plugin.Data.IncludedPlayTypes = included; // 触发持久化
-        if (item.IsChecked || Plugin.Data.FilterMode == FilterModeCustom)
-            Plugin.Data.FilterMode = FilterModeCustom; // 手动勾选即进入自定义
-        RefreshFilter();
+        Plugin.Data.FilterMode = FilterModeCustom; // 手动勾选即进入自定义
+        FilterAll.IsChecked = false;
+        FilterToPlay.IsChecked = false;
+        FilterCustom.IsChecked = true;
+        // 不在此刷新：等菜单关闭时统一应用（见 FilterMenu_Closing）
     }
 
     /// <summary>统一刷新过滤：状态筛选（包含式）+ 时长区间，两个条件为 AND 关系</summary>
