@@ -34,11 +34,16 @@ public static class GalgameClassifier
         // 无 VNDB 条目 = 同人/黄油（RPG Maker 同人普遍只有 Bangumi 页面）→ 同人作
         if (!HasVndbEntry(game)) return GalgameCategory.Doujin;
 
-        // 有 VNDB 条目 → 按内容标签分类
+        // 有 VNDB 条目 → 按内容标签分类。
+        // 拔作信号分强弱两级（用户确认 2026-08-10）：
+        //   强信号（nukige/凌辱/触手/萝莉/幼女等硬核内容词）→ 直接归拔作，即使同时有萌/剧情标签
+        //   弱信号（拔作/实用/萌拔等萌拔常见标签）→ 只有无强拔、无萌/剧情信号时才归拔作
+        // 判定顺序：强拔作 > 剧情作 > 萌作 > 弱拔作 > 其他
         List<string> tags = (game.Tags?.Value ?? []).Select(t => t.Trim().ToLowerInvariant()).ToList();
-        if (tags.Any(IsNukigeTag)) return GalgameCategory.Nukige;
+        if (HasStrongNukigeSignal(tags)) return GalgameCategory.Nukige;
         if (tags.Any(IsStoryTag)) return GalgameCategory.Story;
         if (tags.Any(IsMoeTag)) return GalgameCategory.Moe;
+        if (HasWeakNukigeSignal(tags)) return GalgameCategory.Nukige;
         return GalgameCategory.Other;
     }
 
@@ -59,12 +64,20 @@ public static class GalgameClassifier
         return ids is not null && ids.Length > vndbIndex && !string.IsNullOrWhiteSpace(ids[vndbIndex]);
     }
 
-    /// <summary>拔作信号：nukige 及其派生标签（含中文）</summary>
-    private static bool IsNukigeTag(string tag)
+    /// <summary>拔作强信号（彻底拔作）：VNDB 官方拔作标签或硬核 R18 内容词，即使同时有萌/剧情标签也归拔作</summary>
+    private static bool HasStrongNukigeSignal(List<string> tags)
     {
-        if (tag is "nukige" or "porn with plot" or "sex with plot" or "pornographic" or "explicit sex"
-            or "拔作" or "拔作向" or "实用" or "实用作" or "同人拔" or "eroge") return true;
-        return ContainsAny(tag, NukigeKeywords);
+        if (tags.Any(t => t is "nukige" or "porn with plot" or "sex with plot" or "pornographic" or "explicit sex"))
+            return true;
+        return ContainsAnyAny(tags, StrongNukigeKeywords);
+    }
+
+    /// <summary>拔作弱信号（萌拔常见标签）：仅当无强拔、无萌/剧情信号时才归拔作</summary>
+    private static bool HasWeakNukigeSignal(List<string> tags)
+    {
+        if (tags.Any(t => t is "拔作" or "拔作向" or "实用" or "实用作" or "实用向" or "同人拔" or "萌拔" or "eroge"))
+            return true;
+        return ContainsAnyAny(tags, WeakNukigeKeywords);
     }
 
     /// <summary>剧情作信号：plot / 悬疑 / 泣系等</summary>
@@ -79,18 +92,27 @@ public static class GalgameClassifier
     private static bool IsMoeTag(string tag)
     {
         if (tag is "cute story" or "daily life" or "slice of life" or "school life" or "moe"
-            or "萌" or "治愈" or "日常" or "纯爱" or "废萌" or "温馨" or "轻松") return true;
+            or "萌" or "治愈" or "日常" or "纯爱" or "废萌" or "温馨" or "轻松" or "甜作") return true;
         return ContainsAny(tag, MoeKeywords);
     }
 
     private static bool ContainsAny(string text, string[] keywords)
         => keywords.Any(keyword => text.Contains(keyword, StringComparison.Ordinal));
 
-    private static readonly string[] NukigeKeywords =
+    private static bool ContainsAnyAny(List<string> tags, string[] keywords)
+        => tags.Any(tag => ContainsAny(tag, keywords));
+
+    /// <summary>拔作强信号词（硬核 R18 内容词 / 重口系）</summary>
+    private static readonly string[] StrongNukigeKeywords =
     {
         "ntr", "凌辱", "调教", "触手", "轮奸", "强x", "肉便器", "孕ませ", "榨精", "援交",
-        "h-scene", "vanilla", "ahegao", "impregnation", "mind break", "humiliation",
-        "萌拔", "实用向",
+        "mind break", "humiliation", "萝莉", "幼女", "双飞",
+    };
+
+    /// <summary>拔作弱信号词（萌拔/甜拔常见标签，非决定性）</summary>
+    private static readonly string[] WeakNukigeKeywords =
+    {
+        "vanilla", "ahegao", "impregnation", "无修正", "后宫",
     };
 
     private static readonly string[] StoryKeywords =
