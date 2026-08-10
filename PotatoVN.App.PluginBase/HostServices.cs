@@ -66,6 +66,53 @@ internal static class HostServices
         await (Task)m.Invoke(Service, new object[] { game, GalgameManager.Enums.RssType.None, false, parseType })!;
     }
 
+    /// <summary>
+    /// 清除宿主「上次运行崩溃」残留（KeyValues.LastError）。
+    /// 宿主 App_UnhandledException 会把未处理异常累加存进 lastError 且从不清理，
+    /// 导致每次从托盘恢复窗口都弹"上次运行崩溃了"（内容是历史旧崩溃，如热重载缺陷的 GalgamePrefab cast 错误）。
+    /// 通过反射调宿主 LocalSettingsService.SaveSettingAsync("lastError", null) 写入 JSON null，
+    /// 宿主 ReadSettingAsync 反序列化返回 null → `is { } error` 不匹配 → 不再弹窗。失败时静默。
+    /// </summary>
+    public static void ClearLastError()
+    {
+        try
+        {
+            Plugin.HostApi.InvokeOnMainThread(() =>
+            {
+                try
+                {
+                    Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                        .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+                    if (host is null) return;
+                    Type? appType = host.GetType("GalgameManager.App");
+                    Type? settingsService = host.GetType("GalgameManager.Contracts.Services.ILocalSettingsService");
+                    if (appType is null || settingsService is null) return;
+
+                    MethodInfo? getService = appType.GetMethod("GetService", BindingFlags.Public | BindingFlags.Static);
+                    object? svc = getService?.MakeGenericMethod(settingsService).Invoke(null, null);
+                    if (svc is null) return;
+
+                    // 泛型方法 SaveSettingAsync<T>(string key, T value, bool isLarge = false, ...)
+                    MethodInfo? generic = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                        .FirstOrDefault(m => m.Name == "SaveSettingAsync" && m.IsGenericMethodDefinition)
+                        ?.MakeGenericMethod(typeof(string));
+                    if (generic is null) return;
+
+                    // 写 JSON null → 宿主 ReadSettingAsync<string> 反序列化返回 null → 不再弹窗
+                    _ = generic.Invoke(svc, new object[] { "lastError", (string?)null, false });
+                }
+                catch
+                {
+                    // 静默：清除失败不影响插件功能
+                }
+            });
+        }
+        catch
+        {
+            // 静默
+        }
+    }
+
     private static Type ServiceType() => Service.GetType();
 
     /// <summary>宿主 GameParseType 枚举的 All 常量（int.MaxValue）</summary>

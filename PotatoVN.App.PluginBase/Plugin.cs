@@ -55,6 +55,8 @@ namespace PotatoVN.App.PluginBase
             Data = _data;
             _data.PropertyChanged += (_, _) => SaveData(); // Observable属性变化时自动保存
 
+            // 清除宿主「上次运行崩溃」历史残留（lastError 只累加从不清理，会持续弹旧崩溃提示）
+            HostServices.ClearLastError();
             InitUi();
         }
 
