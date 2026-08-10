@@ -110,11 +110,15 @@ public static class GalgameClassifier
 
     private static readonly string[] DoujinKeywords =
     {
-        "同人", "rpg", "小黄油", "独立游戏", "indie", "rpgmaker", "wolf rpg",
+        // 裸 "rpg" 太宽泛（RPG 类型标签不代表同人），已移除；"rpgmaker" 等精确词足以覆盖引擎类
+        "同人", "小黄油", "独立游戏", "indie", "rpgmaker", "wolf rpg",
     };
 
     private static readonly string[] EngineKeywords =
     {
-        "rpg", "wolf", "tyrano", "ティラノ", "ツクール", "renpy", "artemis", "vib", "kaguya",
+        // 明确的同人/独立引擎工具：RPG Maker 家族、Wolf RPG、Tyrano、RPGツクール、Ren'Py。
+        // 注意：不要把商业引擎（如 AUGUST 的 Artemis、KID 等）混进来，否则会把商业作误判为同人作
+        // （曾误加 artemis/vib/kaguya 导致「秽翼的尤斯蒂娅」被归入同人作，2026-08-10 已移除）。
+        "rpg", "wolf", "tyrano", "ティラノ", "ツクール", "renpy",
     };
 }
