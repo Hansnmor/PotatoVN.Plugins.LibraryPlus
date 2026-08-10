@@ -118,11 +118,13 @@ public static class GalgameClassifier
         => tags.Any(tag => ContainsAny(tag, keywords));
 
     /// <summary>拔作强信号词（硬核 R18 行为词 / 重口系）。角色属性词（萝莉/幼女）不在此列，
-    /// 见 <see cref="LoliAttributeKeywords"/> 与强信号第二条的组合判定。</summary>
+    /// 见 <see cref="LoliAttributeKeywords"/> 与强信号第二条的组合判定。
+    /// 含社区最强拔作定性词「撸出血/抜きゲー」——几乎只出现在真拔作上（如美少女万华镜系列），
+    /// 命中即归拔作，即使带「剧情」标签（2026-08-10 加，万华镜勿忘草/罪与罚被剧情作规则抢走）。</summary>
     private static readonly string[] HardNukigeKeywords =
     {
         "ntr", "凌辱", "调教", "触手", "轮奸", "强x", "肉便器", "孕ませ", "榨精", "援交",
-        "mind break", "humiliation", "双飞",
+        "mind break", "humiliation", "双飞", "撸出血", "抜きゲー", "拔きゲー",
     };
 
     /// <summary>萝莉/幼女等角色属性词：仅当与显式拔作标签同时出现时才构成拔作强信号（loli-nukige）</summary>
