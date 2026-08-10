@@ -34,18 +34,22 @@ public static class GalgameClassifier
         // 无 VNDB 条目 = 同人/黄油（RPG Maker 同人普遍只有 Bangumi 页面）→ 同人作
         if (!HasVndbEntry(game)) return GalgameCategory.Doujin;
 
-        // 有 VNDB 条目 → 按内容标签分类。
-        // 拔作信号分强弱两级（用户确认 2026-08-10）：
-        //   强信号（nukige/凌辱/触手/萝莉/幼女等硬核内容词）→ 直接归拔作，即使同时有萌/剧情标签
-        //   弱信号（拔作/实用/萌拔等萌拔常见标签）→ 只有无强拔、无萌/剧情信号时才归拔作
-        // 判定顺序：强拔作 > 剧情作 > 萌作 > 弱拔作 > 其他
+        // 有 VNDB 条目 → 按内容标签分类（用户确认 2026-08-10）：
+        // 判定顺序：强拔作 > 显式拔作标签计数≥2 > 剧情作 > 萌作 > 弱拔作 > 其他。
+        // 显式拔作标签（拔作/实用/萌拔/eroge…）命中 ≥2 个 = 社区一致认定拔作，压过单个萌/剧情标签
+        //（如 变身！5 个拔作标签归拔；甜蜜女友2 仅 1 个「拔作」仍按萌信号归萌）。
         List<string> tags = (game.Tags?.Value ?? []).Select(t => t.Trim().ToLowerInvariant()).ToList();
         if (HasStrongNukigeSignal(tags)) return GalgameCategory.Nukige;
+        if (CountExplicitNukigeTags(tags) >= 2) return GalgameCategory.Nukige;
         if (tags.Any(IsStoryTag)) return GalgameCategory.Story;
         if (tags.Any(IsMoeTag)) return GalgameCategory.Moe;
         if (HasWeakNukigeSignal(tags)) return GalgameCategory.Nukige;
         return GalgameCategory.Other;
     }
+
+    /// <summary>统计命中的显式拔作标签个数（精确词：拔作/实用/萌拔/eroge 等）</summary>
+    private static int CountExplicitNukigeTags(List<string> tags)
+        => tags.Count(t => ExplicitNukigeTagKeywords.Contains(t));
 
     public static string GetDisplayName(GalgameCategory category) => category switch
     {
