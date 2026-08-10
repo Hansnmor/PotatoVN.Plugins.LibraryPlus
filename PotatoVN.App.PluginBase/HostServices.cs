@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using GalgameManager.Models;
 using GalgameManager.WinApp.Base.Contracts;
+using Microsoft.UI.Xaml.Controls;
 
 namespace PotatoVN.App.PluginBase;
 
@@ -93,28 +94,35 @@ internal static class HostServices
                     object? svc = getService?.MakeGenericMethod(settingsService).Invoke(null, null);
                     if (svc is null) return;
 
-                    MethodInfo? generic = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                        .FirstOrDefault(m => m.Name == "SaveSettingAsync" && m.IsGenericMethodDefinition)
-                        ?.MakeGenericMethod(typeof(string));
                     MethodInfo? read = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                         .FirstOrDefault(m => m.Name == "ReadSettingAsync" && m.IsGenericMethodDefinition)
                         ?.MakeGenericMethod(typeof(string));
-                    if (generic is null || read is null) return;
+                    MethodInfo? save = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                        .FirstOrDefault(m => m.Name == "SaveSettingAsync" && m.IsGenericMethodDefinition)
+                        ?.MakeGenericMethod(typeof(string));
+                    if (read is null || save is null) return;
 
-                    // 读取当前 lastError，仅命中已知历史残留特征才清除
-                    var task = (Task<string?>)read.Invoke(svc, new object[] { "lastError", false });
-                    string? error = task.GetAwaiter().GetResult();
+                    // 反射 Invoke 必须传全部参数（默认值不自动应用）：
+                    // ReadSettingAsync<T>(key, isLarge=false, converters=null, typeNameHandling=false)
+                    var readTask = (Task<string?>)read.Invoke(svc,
+                        new object[] { "lastError", false, null, false })!;
+                    string? error = readTask.GetAwaiter().GetResult();
+                    Plugin.HostApi.Log(InfoBarSeverity.Informational, $"ClearLastError: read='{error?[..Math.Min(60, error.Length)]}'");
+
                     if (error is null) return;
                     if (!error.Contains("GalgamePrefab cannot be cast", StringComparison.Ordinal)
                         && !error.Contains("get_DispatcherQueue", StringComparison.Ordinal))
                         return; // 不是已知历史残留 → 保留，让宿主正常提示真实崩溃
 
-                    // 写 JSON null → 宿主 ReadSettingAsync 反序列化返回 null → 不再弹窗
-                    _ = generic.Invoke(svc, new object[] { "lastError", (string?)null, false });
+                    // SaveSettingAsync<T>(key, value, isLarge=false, triggerEventWhenNull=false, converters=null, typeNameHandling=false)
+                    _ = save.Invoke(svc,
+                        new object[] { "lastError", (string?)null, false, false, null, false });
+                    Plugin.HostApi.Log(InfoBarSeverity.Informational, "ClearLastError: cleared");
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 静默：清除失败不影响插件功能
+                    // 记录失败原因（便于排查），不影响插件功能
+                    Plugin.HostApi.Log(InfoBarSeverity.Warning, $"ClearLastError failed: {ex.Message}");
                 }
             });
         }
