@@ -2,9 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using CommunityToolkit.WinUI.Collections;
 using GalgameManager.Enums;
@@ -13,43 +11,42 @@ using GalgameManager.WinApp.Base.Contracts.NavigationApi;
 using GalgameManager.WinApp.Base.Contracts.NavigationApi.NavigateParameters;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using PotatoVN.App.PluginBase.Helper;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase.Controls;
 
 /// <summary>
 /// 独立的游戏排序页面：与游戏库原生页面功能一致（点击进详情、右键菜单、卡片布局），
-/// 仅在排序方式上额外提供「按预计时长」。本页排序只作用于本页，不影响原生页面。
+/// 排序上额外提供原生没有的条件：预计时长 / 游玩时间 / 游玩次数 / 我的评分，支持主键+次键多级排序。
+/// 本页排序只作用于本页，不影响原生页面。
 /// </summary>
 public sealed partial class SortPage : Page
 {
-    private const string SortConditionDefault = "Default";
-    private const string SortConditionExpected = "Expected";
+    /// <summary>排序键的默认值（无排序 = 保持游戏库原顺序）</summary>
+    private const string KeyDefault = "Default";
 
     private readonly AdvancedCollectionView _source;
     private Galgame? _currentGame;
-    private int _totalCount;
 
     public SortPage()
     {
         XamlResourceLocatorFactory.PluginControlInit(ref _contentLoaded, this);
 
         // 页面重建（如从详情页返回）后，把侧边栏选中指示器移回「更多排序」
-        SidebarSelectionHelper.SelectPluginButton("moreSortOptions");
+        SidebarSelectionHelper.SelectPluginButton("libraryPlus");
 
         List<Galgame> games = Plugin.HostApi.GetAllGames();
-        _totalCount = games.Count;
         _source = new AdvancedCollectionView(games, true);
         GameGridView.ItemsSource = _source;
-        UpdateCountText();
 
-        // 恢复「排除已玩过」状态（页面重建后保持，除非手动更改）
+        // 恢复持久化的页面状态（跨页面重建 / 应用重启保持）
         HidePlayedToggle.IsChecked = Plugin.Data.HidePlayed;
-
-        // 默认按预计时长升序
-        ConditionExpected.IsChecked = true;
-        DescendingItem.IsChecked = false;
+        RestoreRangeState();
+        RestoreSortMenuState();
         ApplySort();
+        UpdateCountText();
+        UpdateStatsText();
     }
 
     #region 排序
@@ -57,54 +54,78 @@ public sealed partial class SortPage : Page
     private void ApplySort()
     {
         _source.SortDescriptions.Clear();
-        if (ConditionExpected.IsChecked == true)
-        {
-            // 不带属性名 + 自定义比较器，方向固定 Ascending，升/降序在比较器内部处理
-            _source.SortDescriptions.Add(new SortDescription(SortDirection.Ascending,
-                new ExpectedPlayTimeComparer(DescendingItem.IsChecked == true)));
-        }
+        AddSortDescription(Plugin.Data.PrimarySortKey, Plugin.Data.PrimaryDescending);
+        AddSortDescription(Plugin.Data.SecondarySortKey, Plugin.Data.SecondaryDescending);
         _source.RefreshSorting();
     }
 
-    private void SetCondition_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 添加一条排序描述。SortDescription 不带属性名 + 自定义比较器（直接接收 Galgame 对象），
+    /// 方向固定 Ascending，升降序在比较器内部处理（保证"未知/0 值恒排最后"在两种方向下一致）。
+    /// 多个 SortDescription 由 AdvancedCollectionView 依次比较，天然形成主键→次键的多级排序。
+    /// </summary>
+    private void AddSortDescription(string key, bool descending)
     {
-        if (sender is not RadioMenuFlyoutItem item) return;
-        ConditionDefault.IsChecked = item.Name == "ConditionDefault";
-        ConditionExpected.IsChecked = item.Name == "ConditionExpected";
+        if (key is null or "" or KeyDefault) return;
+        _source.SortDescriptions.Add(new SortDescription(SortDirection.Ascending, CreateComparer(key, descending)));
+    }
+
+    private static IComparer CreateComparer(string key, bool descending) => key switch
+    {
+        "ExpectedPlayTime" => new ExpectedPlayTimeComparer(descending),
+        "PlayTime" => new NumericValueComparer(g => g.TotalPlayTime, descending),
+        "PlayCount" => new NumericValueComparer(g => g.PlayCount, descending),
+        "MyRate" => new NumericValueComparer(g => g.MyRate, descending),
+        // 兜底：未知键不改变顺序
+        _ => new NumericValueComparer(_ => 0, false),
+    };
+
+    /// <summary>从持久化数据恢复主/次排序键菜单选中状态</summary>
+    private void RestoreSortMenuState()
+    {
+        string primary = Plugin.Data.PrimarySortKey;
+        PrimaryDefault.IsChecked = primary == KeyDefault;
+        PrimaryExpected.IsChecked = primary == "ExpectedPlayTime";
+        PrimaryPlayTime.IsChecked = primary == "PlayTime";
+        PrimaryPlayCount.IsChecked = primary == "PlayCount";
+        PrimaryMyRate.IsChecked = primary == "MyRate";
+        PrimaryDescendingItem.IsChecked = Plugin.Data.PrimaryDescending;
+
+        string secondary = Plugin.Data.SecondarySortKey;
+        SecondaryDefault.IsChecked = secondary == KeyDefault;
+        SecondaryExpected.IsChecked = secondary == "ExpectedPlayTime";
+        SecondaryPlayTime.IsChecked = secondary == "PlayTime";
+        SecondaryPlayCount.IsChecked = secondary == "PlayCount";
+        SecondaryMyRate.IsChecked = secondary == "MyRate";
+        SecondaryDescendingItem.IsChecked = Plugin.Data.SecondaryDescending;
+    }
+
+    private void PrimaryKey_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioMenuFlyoutItem item || item.CommandParameter is not string key) return;
+        Plugin.Data.PrimarySortKey = key;
         ApplySort();
     }
 
-    private void ToggleDescending_Click(object sender, RoutedEventArgs e)
+    private void PrimaryDescending_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is ToggleMenuFlyoutItem item) DescendingItem.IsChecked = item.IsChecked;
+        if (sender is not ToggleMenuFlyoutItem item) return;
+        Plugin.Data.PrimaryDescending = item.IsChecked;
         ApplySort();
     }
 
-    /// <summary>「排除已玩过」切换：启用时从列表过滤掉游玩状态为已玩过的游戏（默认不启用）</summary>
-    private void HidePlayedToggle_OnChanged(object sender, RoutedEventArgs e)
+    private void SecondaryKey_Click(object sender, RoutedEventArgs e)
     {
-        bool hidePlayed = HidePlayedToggle.IsChecked == true;
-        Plugin.Data.HidePlayed = hidePlayed; // 持久化，页面重建/应用重启后保持
-        _source.Filter = hidePlayed ? FilterGame : null;
-        _source.Refresh();
-        UpdateCountText();
+        if (sender is not RadioMenuFlyoutItem item || item.CommandParameter is not string key) return;
+        Plugin.Data.SecondarySortKey = key;
+        ApplySort();
     }
 
-    private bool FilterGame(object? obj) =>
-        HidePlayedToggle.IsChecked != true || obj is not Galgame game || game.PlayType != PlayType.Played;
-
-    /// <summary>更新左上角统计：显示库中全部数量；启用「排除已玩过」时扣减已玩过的数量</summary>
-    private void UpdateCountText()
+    private void SecondaryDescending_Click(object sender, RoutedEventArgs e)
     {
-        if (HidePlayedToggle.IsChecked == true)
-        {
-            int playedCount = _source.Source.OfType<Galgame>().Count(g => g.PlayType == PlayType.Played);
-            CountTextBlock.Text = $"共 {_totalCount - playedCount} 款游戏";
-        }
-        else
-        {
-            CountTextBlock.Text = $"共 {_totalCount} 款游戏";
-        }
+        if (sender is not ToggleMenuFlyoutItem item) return;
+        Plugin.Data.SecondaryDescending = item.IsChecked;
+        ApplySort();
     }
 
     /// <summary>
@@ -118,8 +139,8 @@ public sealed partial class SortPage : Page
 
         public int Compare(object? x, object? y)
         {
-            long? px = ParseMinutes((x as Galgame)?.ExpectedPlayTime?.Value);
-            long? py = ParseMinutes((y as Galgame)?.ExpectedPlayTime?.Value);
+            long? px = ExpectedPlayTimeHelper.ParseMinutes((x as Galgame)?.ExpectedPlayTime?.Value);
+            long? py = ExpectedPlayTimeHelper.ParseMinutes((y as Galgame)?.ExpectedPlayTime?.Value);
 
             if (px is null && py is null) return 0;
             if (px is null) return 1; // 未知时长排在后面
@@ -131,37 +152,131 @@ public sealed partial class SortPage : Page
     }
 
     /// <summary>
-    /// 解析预计时长字符串为分钟数，无法解析返回 null。
-    /// 支持的格式：VNDB 搜刮的 "20h" / "45m" / "1h30m"，以及 "very short" 等类别（映射为估算分钟数）。
+    /// 按数值属性比较游戏（游玩时间/游玩次数/我的评分）：0（未游玩/未评分）恒排最后，无论升序降序。
     /// </summary>
-    private static long? ParseMinutes(string? value)
+    private sealed class NumericValueComparer : IComparer
     {
-        if (string.IsNullOrWhiteSpace(value) || value == Galgame.DefaultString) return null;
+        private readonly Func<Galgame, int> _selector;
+        private readonly bool _descending;
 
-        switch (value.Trim().ToLowerInvariant())
+        public NumericValueComparer(Func<Galgame, int> selector, bool descending)
         {
-            case "very short": return 60;
-            case "short": return 5 * 60;
-            case "medium": return 15 * 60;
-            case "long": return 30 * 60;
-            case "very long": return 50 * 60;
+            _selector = selector;
+            _descending = descending;
         }
 
-        bool any = false;
-        long minutes = 0;
-        Match m = Regex.Match(value, @"(\d+(?:\.\d+)?)\s*h", RegexOptions.IgnoreCase);
-        if (m.Success)
+        public int Compare(object? x, object? y)
         {
-            minutes += (long)(double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) * 60);
-            any = true;
+            int px = x is Galgame gx ? _selector(gx) : 0;
+            int py = y is Galgame gy ? _selector(gy) : 0;
+
+            bool mx = px <= 0, my = py <= 0;
+            if (mx && my) return 0;
+            if (mx) return 1; // 0 值排在后面
+            if (my) return -1;
+
+            int cmp = px.CompareTo(py);
+            return _descending ? -cmp : cmp;
         }
-        m = Regex.Match(value, @"(\d+(?:\.\d+)?)\s*m", RegexOptions.IgnoreCase);
-        if (m.Success)
+    }
+
+    #endregion
+
+    #region 过滤与统计
+
+    /// <summary>时长区间筛选键：All=全部（默认），其余见 <see cref="MatchesRange"/></summary>
+    private const string RangeKeyAll = "All";
+
+    /// <summary>「排除已玩过」切换：启用时从列表过滤掉游玩状态为已玩过的游戏（默认不启用）</summary>
+    private void HidePlayedToggle_OnChanged(object sender, RoutedEventArgs e)
+    {
+        bool hidePlayed = HidePlayedToggle.IsChecked == true;
+        Plugin.Data.HidePlayed = hidePlayed; // 持久化，页面重建/应用重启后保持
+        _source.Filter = FilterGame;
+        _source.Refresh();
+        UpdateCountText();
+        UpdateStatsText();
+    }
+
+    /// <summary>时长区间按钮点击：持久化并刷新列表与统计</summary>
+    private void Range_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton rb || rb.Tag is not string key) return;
+        Plugin.Data.RangeKey = key; // 持久化
+        _source.Filter = FilterGame;
+        _source.Refresh();
+        UpdateCountText();
+        UpdateStatsText();
+    }
+
+    /// <summary>统一过滤：排除已玩过（可选）+ 时长区间（可选），两个条件为 AND 关系</summary>
+    private bool FilterGame(object? obj)
+    {
+        if (obj is not Galgame game) return false;
+        if (HidePlayedToggle.IsChecked == true && game.PlayType == PlayType.Played) return false;
+        return MatchesRange(game);
+    }
+
+    /// <summary>
+    /// 时长区间匹配：<10h（短篇小品）/ 10-20h（单线）/ 20-40h（中等）/ &gt;40h（长篇）。
+    /// 时长未知的游戏不算入任何区间。
+    /// </summary>
+    private bool MatchesRange(Galgame game)
+    {
+        string key = Plugin.Data.RangeKey;
+        if (key == RangeKeyAll) return true;
+
+        long? minutes = ExpectedPlayTimeHelper.ParseMinutes(game.ExpectedPlayTime?.Value);
+        if (minutes is null) return false; // 未知时长不算入任何区间
+        double hours = minutes.Value / 60.0;
+
+        return key switch
         {
-            minutes += (long)double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
-            any = true;
+            "Under10" => hours < 10,
+            "10to20" => hours >= 10 && hours < 20,
+            "20to40" => hours >= 20 && hours < 40,
+            "Over40" => hours >= 40,
+            _ => true,
+        };
+    }
+
+    /// <summary>从持久化数据恢复时长区间按钮选中状态</summary>
+    private void RestoreRangeState()
+    {
+        string key = Plugin.Data.RangeKey;
+        RangeAll.IsChecked = key == RangeKeyAll;
+        RangeUnder10.IsChecked = key == "Under10";
+        Range10To20.IsChecked = key == "10to20";
+        Range20To40.IsChecked = key == "20to40";
+        RangeOver40.IsChecked = key == "Over40";
+    }
+
+    /// <summary>更新左上角统计：显示当前可见（排除+区间生效后）数量</summary>
+    private void UpdateCountText()
+    {
+        CountTextBlock.Text = $"共 {_source.Count} 款游戏";
+    }
+
+    /// <summary>
+    /// 更新统计条（跟随当前可见列表）：待玩总时长 / 完成度（基于全库） / 时长未知数。
+    /// 完成度基于全库——排除已玩过后可见列表已玩数为 0，用全库才有意义。
+    /// </summary>
+    private void UpdateStatsText()
+    {
+        long totalMinutes = 0;
+        int unknown = 0;
+        foreach (Galgame g in _source.OfType<Galgame>())
+        {
+            long? minutes = ExpectedPlayTimeHelper.ParseMinutes(g.ExpectedPlayTime?.Value);
+            if (minutes is null) unknown++;
+            else totalMinutes += minutes.Value;
         }
-        return any ? minutes : null;
+        TotalTimeText.Text = $"待玩总时长：{ExpectedPlayTimeHelper.FormatHours(totalMinutes)}";
+
+        int played = _source.Source.OfType<Galgame>().Count(g => g.PlayType == PlayType.Played);
+        ProgressText.Text = $"完成度：{played}/{_source.Source.Count}";
+
+        UnknownTimeText.Text = $"{unknown} 款时长未知";
     }
 
     #endregion
@@ -250,9 +365,9 @@ public sealed partial class SortPage : Page
 
         await HostServices.RemoveGameAsync(game);
         _source.Source.Remove(game);
-        _totalCount--;
         _source.Refresh();
         UpdateCountText();
+        UpdateStatsText();
     }
 
     #endregion

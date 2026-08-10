@@ -19,8 +19,8 @@ namespace PotatoVN.App.PluginBase
         internal static PluginInfo StaticInfo { get; } = new()
         {
             Id = new Guid("70ee3f8a-361a-450a-acff-5371e85808b4"),
-            Name = "更多排序条件",
-            Description = "提供独立的游戏排序页面，支持按预计时长排序（升序/降序），不影响游戏库原生排序。",
+            Name = "游戏库增强",
+            Description = "为游戏库提供更多排序（预计时长/游玩时间/游玩次数/我的评分）、过滤与统计数据，不影响原生页面。",
         };
 
         private PluginData _data = new();
@@ -29,8 +29,8 @@ namespace PotatoVN.App.PluginBase
         public PluginInfo Info { get; } = new()
         {
             Id = new Guid("70ee3f8a-361a-450a-acff-5371e85808b4"),
-            Name = "更多排序条件",
-            Description = "提供独立的游戏排序页面，支持按预计时长排序（升序/降序），不影响游戏库原生排序。",
+            Name = "游戏库增强",
+            Description = "为游戏库提供更多排序（预计时长/游玩时间/游玩次数/我的评分）、过滤与统计数据，不影响原生页面。",
         };
 
         public async Task InitializeAsync(IPotatoVnApi hostApi)

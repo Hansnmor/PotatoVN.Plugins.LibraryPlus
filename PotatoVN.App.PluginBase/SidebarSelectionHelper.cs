@@ -12,12 +12,12 @@ namespace PotatoVN.App.PluginBase;
 /// 宿主 NavigationViewService.GetSelectedItem 只匹配设置了 NavigateToProperty 的内置项，
 /// 插件按钮没有该属性，因此导航到插件页/详情页时宿主不会自动移动选中指示器（蓝色小条）。
 /// 本类通过反射直接设置 NavigationView.SelectedItem，让蓝条跟随页面移动：
-/// 进详情 → 移动到「游戏」项；返回插件页 → 移回「更多排序」项。
+/// 进详情 → 移动到「游戏」项；返回插件页 → 移回「游戏库增强」项。
 /// 目标均为宿主 x:Name 生成的字段 / 公开属性，跨小版本稳定。
 /// </summary>
 internal static class SidebarSelectionHelper
 {
-    /// <summary>把选中指示器移动到「更多排序」插件按钮</summary>
+    /// <summary>把选中指示器移动到「游戏库增强」插件按钮</summary>
     public static void SelectPluginButton(string buttonId)
     {
         try

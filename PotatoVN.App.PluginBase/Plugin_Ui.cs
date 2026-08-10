@@ -13,13 +13,13 @@ public partial class Plugin
         if (_uiInit) return;
         _hostApi.RegisterSidebarButton(new SidebarButtonInfo
         {
-            Id = "moreSortOptions",
-            Text = "更多排序",
+            Id = "libraryPlus",
+            Text = "游戏库增强",
             Placement = SidebarButtonPlacement.Menu,
             FluentGlyph = "&#xE71C;",
         }, () =>
         {
-            _hostApi.NavigateTo(typeof(SortPage), "更多排序");
+            _hostApi.NavigateTo(typeof(SortPage), "游戏库增强");
             return Task.CompletedTask;
         });
         _uiInit = true;

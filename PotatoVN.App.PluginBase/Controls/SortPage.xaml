@@ -37,6 +37,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -45,12 +46,35 @@
             <AppBarButton Icon="Sort" Label="排序">
                 <AppBarButton.Flyout>
                     <MenuFlyout>
-                        <RadioMenuFlyoutItem x:Name="ConditionDefault" Text="默认顺序" GroupName="SortCondition"
-                                             CommandParameter="Default" Click="SetCondition_Click" />
-                        <RadioMenuFlyoutItem x:Name="ConditionExpected" Text="按预计时长" GroupName="SortCondition"
-                                             CommandParameter="Expected" Click="SetCondition_Click" />
+                        <!-- 主排序键 -->
+                        <RadioMenuFlyoutItem x:Name="PrimaryDefault" Text="默认顺序" GroupName="SortPrimary"
+                                             CommandParameter="Default" Click="PrimaryKey_Click" />
+                        <RadioMenuFlyoutItem x:Name="PrimaryExpected" Text="按预计时长" GroupName="SortPrimary"
+                                             CommandParameter="ExpectedPlayTime" Click="PrimaryKey_Click" />
+                        <RadioMenuFlyoutItem x:Name="PrimaryPlayTime" Text="按游玩时间" GroupName="SortPrimary"
+                                             CommandParameter="PlayTime" Click="PrimaryKey_Click" />
+                        <RadioMenuFlyoutItem x:Name="PrimaryPlayCount" Text="按游玩次数" GroupName="SortPrimary"
+                                             CommandParameter="PlayCount" Click="PrimaryKey_Click" />
+                        <RadioMenuFlyoutItem x:Name="PrimaryMyRate" Text="按我的评分" GroupName="SortPrimary"
+                                             CommandParameter="MyRate" Click="PrimaryKey_Click" />
                         <MenuFlyoutSeparator />
-                        <ToggleMenuFlyoutItem x:Name="DescendingItem" Text="降序" Click="ToggleDescending_Click" />
+                        <ToggleMenuFlyoutItem x:Name="PrimaryDescendingItem" Text="主键降序" Click="PrimaryDescending_Click" />
+                        <MenuFlyoutSeparator />
+                        <!-- 第二排序键 -->
+                        <MenuFlyoutSubItem Text="第二排序键">
+                            <RadioMenuFlyoutItem x:Name="SecondaryDefault" Text="无" GroupName="SortSecondary"
+                                                 CommandParameter="Default" Click="SecondaryKey_Click" />
+                            <RadioMenuFlyoutItem x:Name="SecondaryExpected" Text="按预计时长" GroupName="SortSecondary"
+                                                 CommandParameter="ExpectedPlayTime" Click="SecondaryKey_Click" />
+                            <RadioMenuFlyoutItem x:Name="SecondaryPlayTime" Text="按游玩时间" GroupName="SortSecondary"
+                                                 CommandParameter="PlayTime" Click="SecondaryKey_Click" />
+                            <RadioMenuFlyoutItem x:Name="SecondaryPlayCount" Text="按游玩次数" GroupName="SortSecondary"
+                                                 CommandParameter="PlayCount" Click="SecondaryKey_Click" />
+                            <RadioMenuFlyoutItem x:Name="SecondaryMyRate" Text="按我的评分" GroupName="SortSecondary"
+                                                 CommandParameter="MyRate" Click="SecondaryKey_Click" />
+                            <MenuFlyoutSeparator />
+                            <ToggleMenuFlyoutItem x:Name="SecondaryDescendingItem" Text="次键降序" Click="SecondaryDescending_Click" />
+                        </MenuFlyoutSubItem>
                     </MenuFlyout>
                 </AppBarButton.Flyout>
             </AppBarButton>
@@ -63,9 +87,39 @@
             </CommandBar.Content>
         </CommandBar>
 
+        <!-- 时长区间筛选（左）+ 时长统计（右） -->
+        <Grid Grid.Row="1" Margin="12,4,16,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 区间按钮组：<10h 短篇小品 / 10-20h 单线 / 20-40h 中等 / >40h 长篇 -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                <RadioButton x:Name="RangeAll" Content="全部" GroupName="DurationRange" Tag="All"
+                             IsChecked="True" Checked="Range_Click" />
+                <RadioButton x:Name="RangeUnder10" Content="&lt;10h" GroupName="DurationRange" Tag="Under10"
+                             Checked="Range_Click" />
+                <RadioButton x:Name="Range10To20" Content="10-20h" GroupName="DurationRange" Tag="10to20"
+                             Checked="Range_Click" />
+                <RadioButton x:Name="Range20To40" Content="20-40h" GroupName="DurationRange" Tag="20to40"
+                             Checked="Range_Click" />
+                <RadioButton x:Name="RangeOver40" Content="&gt;40h" GroupName="DurationRange" Tag="Over40"
+                             Checked="Range_Click" />
+            </StackPanel>
+
+            <!-- 统计（跟随当前可见列表）：预计总时长 / 完成度 / 时长未知数 -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock x:Name="TotalTimeText" Style="{ThemeResource BodyTextStyle}" />
+                <TextBlock x:Name="ProgressText" Style="{ThemeResource BodyTextStyle}" />
+                <TextBlock x:Name="UnknownTimeText" Style="{ThemeResource BodyTextStyle}" />
+            </StackPanel>
+        </Grid>
+
         <!-- 游戏网格（与原生一致的卡片尺寸与自适应布局） -->
         <GridView
-            Grid.Row="1" x:Name="GameGridView"
+            Grid.Row="2" x:Name="GameGridView"
             IsItemClickEnabled="True"
             SelectionMode="None"
             IsMultiSelectCheckBoxEnabled="False"
