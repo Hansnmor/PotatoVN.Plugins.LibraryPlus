@@ -41,7 +41,6 @@ public sealed partial class SortPage : Page
         GameGridView.ItemsSource = _source;
 
         // 恢复持久化的页面状态（跨页面重建 / 应用重启保持）
-        HidePlayedToggle.IsChecked = Plugin.Data.HidePlayed;
         RestoreRangeState();
         RestoreSortMenuState();
         ApplySort();
@@ -187,15 +186,50 @@ public sealed partial class SortPage : Page
     /// <summary>时长区间筛选键：All=全部（默认），其余见 <see cref="MatchesRange"/></summary>
     private const string RangeKeyAll = "All";
 
-    /// <summary>「排除已玩过」切换：启用时从列表过滤掉游玩状态为已玩过的游戏（默认不启用）</summary>
-    private void HidePlayedToggle_OnChanged(object sender, RoutedEventArgs e)
+    /// <summary>「排除状态」菜单打开时，把各状态项的勾选态同步为持久化的排除集合</summary>
+    private void ExcludeMenu_Opening(object sender, object e)
     {
-        bool hidePlayed = HidePlayedToggle.IsChecked == true;
-        Plugin.Data.HidePlayed = hidePlayed; // 持久化，页面重建/应用重启后保持
+        List<string> excluded = Plugin.Data.ExcludedPlayTypes;
+        ExcludeNone.IsChecked = excluded.Contains("None");
+        ExcludePlaying.IsChecked = excluded.Contains("Playing");
+        ExcludePlayed.IsChecked = excluded.Contains("Played");
+        ExcludeShelved.IsChecked = excluded.Contains("Shelved");
+        ExcludeAbandoned.IsChecked = excluded.Contains("Abandoned");
+        ExcludeWantToPlay.IsChecked = excluded.Contains("WantToPlay");
+    }
+
+    /// <summary>「排除状态」菜单项点击：勾选=排除该状态，取消=恢复显示；支持多选组合</summary>
+    private void ExcludeItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleMenuFlyoutItem item || item.CommandParameter is not string playTypeName) return;
+
+        List<string> excluded = Plugin.Data.ExcludedPlayTypes;
+        if (item.IsChecked)
+        {
+            if (!excluded.Contains(playTypeName)) excluded.Add(playTypeName);
+        }
+        else
+        {
+            excluded.Remove(playTypeName);
+        }
+        Plugin.Data.ExcludedPlayTypes = excluded; // 触发持久化
+        RefreshFilter();
+    }
+
+    /// <summary>统一刷新过滤：排除状态（可多选）+ 时长区间，两个条件为 AND 关系</summary>
+    private void RefreshFilter()
+    {
         _source.Filter = FilterGame;
         _source.Refresh();
         UpdateCountText();
         UpdateStatsText();
+    }
+
+    private bool FilterGame(object? obj)
+    {
+        if (obj is not Galgame game) return false;
+        if (Plugin.Data.ExcludedPlayTypes.Contains(game.PlayType.ToString())) return false;
+        return MatchesRange(game);
     }
 
     /// <summary>时长区间按钮点击：持久化并刷新列表与统计</summary>
@@ -207,14 +241,6 @@ public sealed partial class SortPage : Page
         _source.Refresh();
         UpdateCountText();
         UpdateStatsText();
-    }
-
-    /// <summary>统一过滤：排除已玩过（可选）+ 时长区间（可选），两个条件为 AND 关系</summary>
-    private bool FilterGame(object? obj)
-    {
-        if (obj is not Galgame game) return false;
-        if (HidePlayedToggle.IsChecked == true && game.PlayType == PlayType.Played) return false;
-        return MatchesRange(game);
     }
 
     /// <summary>

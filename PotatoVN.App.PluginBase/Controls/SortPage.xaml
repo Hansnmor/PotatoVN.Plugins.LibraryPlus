@@ -78,9 +78,19 @@
                     </MenuFlyout>
                 </AppBarButton.Flyout>
             </AppBarButton>
-            <!-- 排除已玩过状态（默认不启用；IsChecked 由代码设置，避免插件 LoadComponent 下 IsChecked 字面量解析失败） -->
-            <AppBarToggleButton x:Name="HidePlayedToggle" Icon="Filter" Label="排除已玩过"
-                                Checked="HidePlayedToggle_OnChanged" Unchecked="HidePlayedToggle_OnChanged" />
+            <!-- 排除游玩状态（可多选组合，默认不排除；IsChecked 由代码在菜单打开时同步，避免插件 LoadComponent 下 IsChecked 字面量解析失败） -->
+            <AppBarButton Icon="Filter" Label="排除状态">
+                <AppBarButton.Flyout>
+                    <MenuFlyout Opening="ExcludeMenu_Opening">
+                        <ToggleMenuFlyoutItem x:Name="ExcludeNone" Text="未标记" CommandParameter="None" Click="ExcludeItem_Click" />
+                        <ToggleMenuFlyoutItem x:Name="ExcludePlaying" Text="游玩中" CommandParameter="Playing" Click="ExcludeItem_Click" />
+                        <ToggleMenuFlyoutItem x:Name="ExcludePlayed" Text="已玩过" CommandParameter="Played" Click="ExcludeItem_Click" />
+                        <ToggleMenuFlyoutItem x:Name="ExcludeShelved" Text="搁置" CommandParameter="Shelved" Click="ExcludeItem_Click" />
+                        <ToggleMenuFlyoutItem x:Name="ExcludeAbandoned" Text="抛弃" CommandParameter="Abandoned" Click="ExcludeItem_Click" />
+                        <ToggleMenuFlyoutItem x:Name="ExcludeWantToPlay" Text="想玩" CommandParameter="WantToPlay" Click="ExcludeItem_Click" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
             <CommandBar.Content>
                 <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"
                            Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />

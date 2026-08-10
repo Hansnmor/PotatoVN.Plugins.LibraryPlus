@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace PotatoVN.App.PluginBase.Models;
@@ -7,8 +8,11 @@ namespace PotatoVN.App.PluginBase.Models;
 /// </summary>
 public partial class PluginData : ObservableRecipient
 {
-    /// <summary>是否启用「排除已玩过」（默认关闭；跨页面重建/应用重启保持）</summary>
-    [ObservableProperty] private bool _hidePlayed;
+    /// <summary>
+    /// 要排除的游玩状态（PlayType 枚举名字符串列表，可多选组合，默认不排除任何状态）。
+    /// 例如 ["Played", "Abandoned"] = 同时排除已玩过与抛弃。
+    /// </summary>
+    [ObservableProperty] private List<string> _excludedPlayTypes = new();
 
     /// <summary>主排序键（SortKey 枚举名，默认按预计时长）</summary>
     [ObservableProperty] private string _primarySortKey = "ExpectedPlayTime";
