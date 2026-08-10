@@ -35,13 +35,13 @@ public static class GalgameClassifier
         if (!HasVndbEntry(game)) return GalgameCategory.Doujin;
 
         // 有 VNDB 条目 → 按内容标签分类（用户确认 2026-08-10）：
-        // 判定顺序：强拔作 > 显式拔作标签计数≥2 > 剧情作 > 萌作 > 弱拔作 > 其他。
-        // 显式拔作标签（拔作/实用/萌拔/eroge…）命中 ≥2 个 = 社区一致认定拔作，压过单个萌/剧情标签
-        //（如 变身！5 个拔作标签归拔；甜蜜女友2 仅 1 个「拔作」仍按萌信号归萌）。
+        // 判定顺序：强拔作 > 剧情作 > 显式拔作标签计数≥2 > 萌作 > 弱拔作 > 其他。
+        // 剧情作优先于拔作计数：R18 神作（如勇战魔物娘）打"拔作/eroge"标签是描述 R18 属性，
+        // 而"剧情/史诗级"描述作品性质，性质信号优先（拔作 = 以色情为核心驱动，剧情作 = 以剧情为核心）。
         List<string> tags = (game.Tags?.Value ?? []).Select(t => t.Trim().ToLowerInvariant()).ToList();
         if (HasStrongNukigeSignal(tags)) return GalgameCategory.Nukige;
-        if (CountExplicitNukigeTags(tags) >= 2) return GalgameCategory.Nukige;
         if (tags.Any(IsStoryTag)) return GalgameCategory.Story;
+        if (CountExplicitNukigeTags(tags) >= 2) return GalgameCategory.Nukige;
         if (tags.Any(IsMoeTag)) return GalgameCategory.Moe;
         if (HasWeakNukigeSignal(tags)) return GalgameCategory.Nukige;
         return GalgameCategory.Other;
