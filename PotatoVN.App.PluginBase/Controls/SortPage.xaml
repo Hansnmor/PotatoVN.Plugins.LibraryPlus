@@ -78,9 +78,9 @@
                     </MenuFlyout>
                 </AppBarButton.Flyout>
             </AppBarButton>
-            <!-- 排除已玩过状态（默认不启用） -->
+            <!-- 排除已玩过状态（默认不启用；IsChecked 由代码设置，避免插件 LoadComponent 下 IsChecked 字面量解析失败） -->
             <AppBarToggleButton x:Name="HidePlayedToggle" Icon="Filter" Label="排除已玩过"
-                                IsChecked="False" Checked="HidePlayedToggle_OnChanged" Unchecked="HidePlayedToggle_OnChanged" />
+                                Checked="HidePlayedToggle_OnChanged" Unchecked="HidePlayedToggle_OnChanged" />
             <CommandBar.Content>
                 <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"
                            Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />
@@ -95,9 +95,11 @@
             </Grid.ColumnDefinitions>
 
             <!-- 区间按钮组：<10h 短篇小品 / 10-20h 单线 / 20-40h 中等 / >40h 长篇 -->
+            <!-- 注意：不要在 XAML 里给 RadioButton 写 IsChecked 字面量（插件 LoadComponent 路径下
+                 ToggleButton.IsChecked 赋值会 XamlParseException），选中状态统一由代码 RestoreRangeState 设置 -->
             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                 <RadioButton x:Name="RangeAll" Content="全部" GroupName="DurationRange" Tag="All"
-                             IsChecked="True" Checked="Range_Click" />
+                             Checked="Range_Click" />
                 <RadioButton x:Name="RangeUnder10" Content="&lt;10h" GroupName="DurationRange" Tag="Under10"
                              Checked="Range_Click" />
                 <RadioButton x:Name="Range10To20" Content="10-20h" GroupName="DurationRange" Tag="10to20"
@@ -105,6 +107,10 @@
                 <RadioButton x:Name="Range20To40" Content="20-40h" GroupName="DurationRange" Tag="20to40"
                              Checked="Range_Click" />
                 <RadioButton x:Name="RangeOver40" Content="&gt;40h" GroupName="DurationRange" Tag="Over40"
+                             Checked="Range_Click" />
+                <!-- 与四档时长隔开一段间距 -->
+                <Rectangle Width="12" Height="1" VerticalAlignment="Center" />
+                <RadioButton x:Name="RangeUnknown" Content="时长未知" GroupName="DurationRange" Tag="Unknown"
                              Checked="Range_Click" />
             </StackPanel>
 

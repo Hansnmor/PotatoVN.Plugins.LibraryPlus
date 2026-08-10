@@ -218,8 +218,8 @@ public sealed partial class SortPage : Page
     }
 
     /// <summary>
-    /// 时长区间匹配：<10h（短篇小品）/ 10-20h（单线）/ 20-40h（中等）/ &gt;40h（长篇）。
-    /// 时长未知的游戏不算入任何区间。
+    /// 时长区间匹配：<10h（短篇小品）/ 10-20h（单线）/ 20-40h（中等）/ &gt;40h（长篇）/ 时长未知。
+    /// 时长未知的游戏不算入四个时长区间，仅归入「时长未知」档（或在"全部"中可见）。
     /// </summary>
     private bool MatchesRange(Galgame game)
     {
@@ -227,7 +227,8 @@ public sealed partial class SortPage : Page
         if (key == RangeKeyAll) return true;
 
         long? minutes = ExpectedPlayTimeHelper.ParseMinutes(game.ExpectedPlayTime?.Value);
-        if (minutes is null) return false; // 未知时长不算入任何区间
+        if (key == "Unknown") return minutes is null;
+        if (minutes is null) return false; // 未知时长不算入任何时长区间
         double hours = minutes.Value / 60.0;
 
         return key switch
@@ -249,6 +250,7 @@ public sealed partial class SortPage : Page
         Range10To20.IsChecked = key == "10to20";
         Range20To40.IsChecked = key == "20to40";
         RangeOver40.IsChecked = key == "Over40";
+        RangeUnknown.IsChecked = key == "Unknown";
     }
 
     /// <summary>更新左上角统计：显示当前可见（排除+区间生效后）数量</summary>
