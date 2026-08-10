@@ -67,11 +67,12 @@ internal static class HostServices
     }
 
     /// <summary>
-    /// 清除宿主「上次运行崩溃」残留（KeyValues.LastError）。
-    /// 宿主 App_UnhandledException 会把未处理异常累加存进 lastError 且从不清理，
-    /// 导致每次从托盘恢复窗口都弹"上次运行崩溃了"（内容是历史旧崩溃，如热重载缺陷的 GalgamePrefab cast 错误）。
-    /// 通过反射调宿主 LocalSettingsService.SaveSettingAsync("lastError", null) 写入 JSON null，
-    /// 宿主 ReadSettingAsync 反序列化返回 null → `is { } error` 不匹配 → 不再弹窗。失败时静默。
+    /// 清除宿主「上次运行崩溃」的已知历史残留（KeyValues.LastError）。
+    /// 宿主 App_UnhandledException 把未处理异常累加存进 lastError 且从不清理，
+    /// 导致每次从托盘恢复窗口都弹"上次运行崩溃了"（内容是历史旧崩溃）。
+    /// 仅当 lastError 包含已知的历史残留特征（热重载缺陷的 GalgamePrefab cast、
+    /// 旧版 DispatcherQueue 崩溃）时才清除——避免无差别清掉未来真实的崩溃报告
+    ///（宿主崩溃→写入→自动重启→插件初始化清除 的链条会掩盖新崩溃）。失败时静默。
     /// </summary>
     public static void ClearLastError()
     {
@@ -92,13 +93,23 @@ internal static class HostServices
                     object? svc = getService?.MakeGenericMethod(settingsService).Invoke(null, null);
                     if (svc is null) return;
 
-                    // 泛型方法 SaveSettingAsync<T>(string key, T value, bool isLarge = false, ...)
                     MethodInfo? generic = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                         .FirstOrDefault(m => m.Name == "SaveSettingAsync" && m.IsGenericMethodDefinition)
                         ?.MakeGenericMethod(typeof(string));
-                    if (generic is null) return;
+                    MethodInfo? read = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                        .FirstOrDefault(m => m.Name == "ReadSettingAsync" && m.IsGenericMethodDefinition)
+                        ?.MakeGenericMethod(typeof(string));
+                    if (generic is null || read is null) return;
 
-                    // 写 JSON null → 宿主 ReadSettingAsync<string> 反序列化返回 null → 不再弹窗
+                    // 读取当前 lastError，仅命中已知历史残留特征才清除
+                    var task = (Task<string?>)read.Invoke(svc, new object[] { "lastError", false });
+                    string? error = task.GetAwaiter().GetResult();
+                    if (error is null) return;
+                    if (!error.Contains("GalgamePrefab cannot be cast", StringComparison.Ordinal)
+                        && !error.Contains("get_DispatcherQueue", StringComparison.Ordinal))
+                        return; // 不是已知历史残留 → 保留，让宿主正常提示真实崩溃
+
+                    // 写 JSON null → 宿主 ReadSettingAsync 反序列化返回 null → 不再弹窗
                     _ = generic.Invoke(svc, new object[] { "lastError", (string?)null, false });
                 }
                 catch
