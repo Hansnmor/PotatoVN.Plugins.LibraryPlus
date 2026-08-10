@@ -14,12 +14,12 @@ public partial class Plugin
         _hostApi.RegisterSidebarButton(new SidebarButtonInfo
         {
             Id = "libraryPlus",
-            Text = "游戏库增强",
+            Text = "扩展库",
             Placement = SidebarButtonPlacement.Menu,
             FluentGlyph = "&#xE71C;",
         }, () =>
         {
-            _hostApi.NavigateTo(typeof(SortPage), "游戏库增强");
+            _hostApi.NavigateTo(typeof(SortPage), "扩展库");
             return Task.CompletedTask;
         });
         _uiInit = true;
