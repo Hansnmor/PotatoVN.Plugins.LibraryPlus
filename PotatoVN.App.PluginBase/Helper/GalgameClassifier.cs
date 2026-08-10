@@ -64,12 +64,21 @@ public static class GalgameClassifier
         return ids is not null && ids.Length > vndbIndex && !string.IsNullOrWhiteSpace(ids[vndbIndex]);
     }
 
-    /// <summary>拔作强信号（彻底拔作）：VNDB 官方拔作标签或硬核 R18 内容词，即使同时有萌/剧情标签也归拔作</summary>
+    /// <summary>
+    /// 拔作强信号：
+    /// 1) 硬核 R18 行为词（nukige/凌辱/触手/调教/轮奸/双飞 等）直接命中；
+    /// 2) 萝莉/幼女等角色属性词**仅当同时带显式拔作标签**（拔作/实用/萌拔…）才算强信号——
+    ///    夜羊社（loli-nukige）有拔作标签归拔作，而 FAVORITE 红瞳世界等含萝莉/幼女角色的纯爱剧情作
+    ///    无拔作标签则不受影响（曾因 幼女/萝莉 单独命中误伤 映入红瞳的世界，2026-08-10 修正）。
+    /// </summary>
     private static bool HasStrongNukigeSignal(List<string> tags)
     {
         if (tags.Any(t => t is "nukige" or "porn with plot" or "sex with plot" or "pornographic" or "explicit sex"))
             return true;
-        return ContainsAnyAny(tags, StrongNukigeKeywords);
+        if (ContainsAnyAny(tags, HardNukigeKeywords)) return true;
+        if (ContainsAnyAny(tags, LoliAttributeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords))
+            return true;
+        return false;
     }
 
     /// <summary>拔作弱信号（萌拔常见标签）：仅当无强拔、无萌/剧情信号时才归拔作</summary>
@@ -102,13 +111,24 @@ public static class GalgameClassifier
     private static bool ContainsAnyAny(List<string> tags, string[] keywords)
         => tags.Any(tag => ContainsAny(tag, keywords));
 
-    /// <summary>拔作强信号词（硬核 R18 内容词 / 重口系）。
-    /// 注意：不要把常见角色属性词放进来——曾误加"萝莉"导致含萝莉角色的纯爱剧情作
-    /// （如 FAVORITE 的五彩斑斓的世界）被误判为拔作，2026-08-10 已移除。"幼女/双飞"更硬核保留。</summary>
-    private static readonly string[] StrongNukigeKeywords =
+    /// <summary>拔作强信号词（硬核 R18 行为词 / 重口系）。角色属性词（萝莉/幼女）不在此列，
+    /// 见 <see cref="LoliAttributeKeywords"/> 与强信号第二条的组合判定。</summary>
+    private static readonly string[] HardNukigeKeywords =
     {
         "ntr", "凌辱", "调教", "触手", "轮奸", "强x", "肉便器", "孕ませ", "榨精", "援交",
-        "mind break", "humiliation", "幼女", "双飞",
+        "mind break", "humiliation", "双飞",
+    };
+
+    /// <summary>萝莉/幼女等角色属性词：仅当与显式拔作标签同时出现时才构成拔作强信号（loli-nukige）</summary>
+    private static readonly string[] LoliAttributeKeywords =
+    {
+        "萝莉", "幼女", "loli",
+    };
+
+    /// <summary>显式拔作标签：与萝莉/幼女组合可构成强信号；单独出现是弱信号（萌拔常见）</summary>
+    private static readonly string[] ExplicitNukigeTagKeywords =
+    {
+        "拔作", "拔作向", "实用", "实用作", "实用向", "同人拔", "萌拔", "eroge",
     };
 
     /// <summary>拔作弱信号词（萌拔/甜拔常见标签，非决定性）</summary>
