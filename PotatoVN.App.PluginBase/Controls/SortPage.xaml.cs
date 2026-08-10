@@ -343,12 +343,23 @@ public sealed partial class SortPage : Page
     {
         long totalMinutes = 0;
         int unknown = 0;
+        int shortCount = 0, singleCount = 0, mediumCount = 0, longCount = 0;
         foreach (Galgame g in _source.OfType<Galgame>())
         {
             long? minutes = ExpectedPlayTimeHelper.ParseMinutes(g.ExpectedPlayTime?.Value);
-            if (minutes is null) unknown++;
-            else totalMinutes += minutes.Value;
+            if (minutes is null)
+            {
+                unknown++;
+                continue;
+            }
+            totalMinutes += minutes.Value;
+            double hours = minutes.Value / 60.0;
+            if (hours < 10) shortCount++;
+            else if (hours < 20) singleCount++;
+            else if (hours < 40) mediumCount++;
+            else longCount++;
         }
+        DurationDistributionText.Text = $"短篇 {shortCount} · 单线 {singleCount} · 中等 {mediumCount} · 长篇 {longCount}";
         TotalTimeText.Text = $"待玩总时长：{ExpectedPlayTimeHelper.FormatHours(totalMinutes)}";
 
         int played = _source.Source.OfType<Galgame>().Count(g => g.PlayType == PlayType.Played);
