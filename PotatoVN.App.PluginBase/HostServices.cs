@@ -110,9 +110,15 @@ internal static class HostServices
                     Plugin.HostApi.Log(InfoBarSeverity.Informational, $"ClearLastError: read='{error?[..Math.Min(60, error.Length)]}'");
 
                     if (error is null) return;
+                    // 已知的历史残留特征（均为宿主缺陷产生的噪音，非插件真实 bug）：
+                    // 1) 热重载 GalgamePrefab cast 错误（新旧 PluginLoadContext 双加载）
+                    // 2) 旧版 DispatcherQueue 崩溃（宿主旧 WinUI 无该 API）
+                    // 3) XamlParseException（点×进托盘=AppInstance.Restart 重启，新进程删热重载目录后，
+                    //    任务栏旧实例激活加载插件 XAML 资源失效——宿主多进程竞态）
                     if (!error.Contains("GalgamePrefab cannot be cast", StringComparison.Ordinal)
-                        && !error.Contains("get_DispatcherQueue", StringComparison.Ordinal))
-                        return; // 不是已知历史残留 → 保留，让宿主正常提示真实崩溃
+                        && !error.Contains("get_DispatcherQueue", StringComparison.Ordinal)
+                        && !error.Contains("XamlParseException", StringComparison.Ordinal))
+                        return; // 非已知噪音 → 保留，让宿主正常提示
 
                     // SaveSettingAsync<T>(key, value, isLarge=false, triggerEventWhenNull=false, converters=null, typeNameHandling=false)
                     _ = save.Invoke(svc,
