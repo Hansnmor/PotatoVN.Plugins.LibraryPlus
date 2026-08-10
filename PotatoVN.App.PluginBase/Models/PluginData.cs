@@ -9,10 +9,15 @@ namespace PotatoVN.App.PluginBase.Models;
 public partial class PluginData : ObservableRecipient
 {
     /// <summary>
-    /// 要排除的游玩状态（PlayType 枚举名字符串列表，可多选组合，默认不排除任何状态）。
-    /// 例如 ["Played", "Abandoned"] = 同时排除已玩过与抛弃。
+    /// 状态筛选模式：All=全部（不过滤）/ ToPlay=待玩预设（未标记+游玩中+想玩）/ Custom=自定义。
     /// </summary>
-    [ObservableProperty] private List<string> _excludedPlayTypes = new();
+    [ObservableProperty] private string _filterMode = "All";
+
+    /// <summary>
+    /// 自定义筛选时要显示的游玩状态（PlayType 枚举名字符串列表）；仅 <see cref="FilterMode"/> 为 Custom 时生效，
+    /// 空列表表示不过滤（等同全部）。
+    /// </summary>
+    [ObservableProperty] private List<string> _includedPlayTypes = new();
 
     /// <summary>主排序键（SortKey 枚举名，默认按预计时长）</summary>
     [ObservableProperty] private string _primarySortKey = "ExpectedPlayTime";

@@ -186,37 +186,57 @@ public sealed partial class SortPage : Page
     /// <summary>时长区间筛选键：All=全部（默认），其余见 <see cref="MatchesRange"/></summary>
     private const string RangeKeyAll = "All";
 
-    /// <summary>「排除状态」菜单打开时，把各状态项的勾选态同步为持久化的排除集合</summary>
-    private void ExcludeMenu_Opening(object sender, object e)
+    /// <summary>状态筛选模式常量：All=全部 / ToPlay=待玩预设 / Custom=自定义</summary>
+    private const string FilterModeAll = "All";
+    private const string FilterModeToPlay = "ToPlay";
+    private const string FilterModeCustom = "Custom";
+
+    /// <summary>「筛选」菜单打开时，同步预设单选与状态勾选态</summary>
+    private void FilterMenu_Opening(object sender, object e)
     {
-        List<string> excluded = Plugin.Data.ExcludedPlayTypes;
-        ExcludeNone.IsChecked = excluded.Contains("None");
-        ExcludePlaying.IsChecked = excluded.Contains("Playing");
-        ExcludePlayed.IsChecked = excluded.Contains("Played");
-        ExcludeShelved.IsChecked = excluded.Contains("Shelved");
-        ExcludeAbandoned.IsChecked = excluded.Contains("Abandoned");
-        ExcludeWantToPlay.IsChecked = excluded.Contains("WantToPlay");
+        string mode = Plugin.Data.FilterMode;
+        FilterAll.IsChecked = mode == FilterModeAll;
+        FilterToPlay.IsChecked = mode == FilterModeToPlay;
+        FilterCustom.IsChecked = mode == FilterModeCustom;
+
+        List<string> included = Plugin.Data.IncludedPlayTypes;
+        IncludeNone.IsChecked = included.Contains("None");
+        IncludePlaying.IsChecked = included.Contains("Playing");
+        IncludePlayed.IsChecked = included.Contains("Played");
+        IncludeShelved.IsChecked = included.Contains("Shelved");
+        IncludeAbandoned.IsChecked = included.Contains("Abandoned");
+        IncludeWantToPlay.IsChecked = included.Contains("WantToPlay");
     }
 
-    /// <summary>「排除状态」菜单项点击：勾选=排除该状态，取消=恢复显示；支持多选组合</summary>
-    private void ExcludeItem_Click(object sender, RoutedEventArgs e)
+    /// <summary>预设点击：全部 / 待玩 / 自定义</summary>
+    private void FilterPreset_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not ToggleMenuFlyoutItem item || item.CommandParameter is not string playTypeName) return;
-
-        List<string> excluded = Plugin.Data.ExcludedPlayTypes;
-        if (item.IsChecked)
-        {
-            if (!excluded.Contains(playTypeName)) excluded.Add(playTypeName);
-        }
-        else
-        {
-            excluded.Remove(playTypeName);
-        }
-        Plugin.Data.ExcludedPlayTypes = excluded; // 触发持久化
+        if (sender is not RadioMenuFlyoutItem item || item.CommandParameter is not string mode) return;
+        Plugin.Data.FilterMode = mode; // 持久化
         RefreshFilter();
     }
 
-    /// <summary>统一刷新过滤：排除状态（可多选）+ 时长区间，两个条件为 AND 关系</summary>
+    /// <summary>自定义模式：勾选=只显示该状态；勾选时自动切到「自定义」模式</summary>
+    private void FilterState_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleMenuFlyoutItem item || item.CommandParameter is not string playTypeName) return;
+
+        List<string> included = Plugin.Data.IncludedPlayTypes;
+        if (item.IsChecked)
+        {
+            if (!included.Contains(playTypeName)) included.Add(playTypeName);
+        }
+        else
+        {
+            included.Remove(playTypeName);
+        }
+        Plugin.Data.IncludedPlayTypes = included; // 触发持久化
+        if (item.IsChecked || Plugin.Data.FilterMode == FilterModeCustom)
+            Plugin.Data.FilterMode = FilterModeCustom; // 手动勾选即进入自定义
+        RefreshFilter();
+    }
+
+    /// <summary>统一刷新过滤：状态筛选（包含式）+ 时长区间，两个条件为 AND 关系</summary>
     private void RefreshFilter()
     {
         _source.Filter = FilterGame;
@@ -228,8 +248,24 @@ public sealed partial class SortPage : Page
     private bool FilterGame(object? obj)
     {
         if (obj is not Galgame game) return false;
-        if (Plugin.Data.ExcludedPlayTypes.Contains(game.PlayType.ToString())) return false;
+        if (!MatchesPlayTypeFilter(game)) return false;
         return MatchesRange(game);
+    }
+
+    /// <summary>
+    /// 状态筛选（包含式）：All=全部；ToPlay=待玩预设（未标记+游玩中+想玩）；
+    /// Custom=只显示 IncludedPlayTypes 中的状态（空列表视为全部）。
+    /// </summary>
+    private bool MatchesPlayTypeFilter(Galgame game)
+    {
+        string mode = Plugin.Data.FilterMode;
+        if (mode == FilterModeAll) return true;
+        if (mode == FilterModeToPlay)
+            return game.PlayType is PlayType.None or PlayType.Playing or PlayType.WantToPlay;
+
+        // Custom
+        List<string> included = Plugin.Data.IncludedPlayTypes;
+        return included.Count == 0 || included.Contains(game.PlayType.ToString());
     }
 
     /// <summary>时长区间按钮点击：持久化并刷新列表与统计</summary>

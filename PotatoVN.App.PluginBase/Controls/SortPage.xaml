@@ -78,16 +78,26 @@
                     </MenuFlyout>
                 </AppBarButton.Flyout>
             </AppBarButton>
-            <!-- 排除游玩状态（可多选组合，默认不排除；IsChecked 由代码在菜单打开时同步，避免插件 LoadComponent 下 IsChecked 字面量解析失败） -->
-            <AppBarButton Icon="Filter" Label="排除状态">
+            <!-- 状态筛选（包含式：勾选=只显示勾选的状态；顶部快捷预设；IsChecked 由代码在菜单打开时同步，
+                 避免插件 LoadComponent 下 IsChecked 字面量解析失败） -->
+            <AppBarButton Icon="Filter" Label="筛选">
                 <AppBarButton.Flyout>
-                    <MenuFlyout Opening="ExcludeMenu_Opening">
-                        <ToggleMenuFlyoutItem x:Name="ExcludeNone" Text="未标记" CommandParameter="None" Click="ExcludeItem_Click" />
-                        <ToggleMenuFlyoutItem x:Name="ExcludePlaying" Text="游玩中" CommandParameter="Playing" Click="ExcludeItem_Click" />
-                        <ToggleMenuFlyoutItem x:Name="ExcludePlayed" Text="已玩过" CommandParameter="Played" Click="ExcludeItem_Click" />
-                        <ToggleMenuFlyoutItem x:Name="ExcludeShelved" Text="搁置" CommandParameter="Shelved" Click="ExcludeItem_Click" />
-                        <ToggleMenuFlyoutItem x:Name="ExcludeAbandoned" Text="抛弃" CommandParameter="Abandoned" Click="ExcludeItem_Click" />
-                        <ToggleMenuFlyoutItem x:Name="ExcludeWantToPlay" Text="想玩" CommandParameter="WantToPlay" Click="ExcludeItem_Click" />
+                    <MenuFlyout Opening="FilterMenu_Opening">
+                        <!-- 快捷预设 -->
+                        <RadioMenuFlyoutItem x:Name="FilterAll" Text="全部" GroupName="SortPageFilter"
+                                             CommandParameter="All" Click="FilterPreset_Click" />
+                        <RadioMenuFlyoutItem x:Name="FilterToPlay" Text="待玩（未标记+游玩中+想玩）" GroupName="SortPageFilter"
+                                             CommandParameter="ToPlay" Click="FilterPreset_Click" />
+                        <RadioMenuFlyoutItem x:Name="FilterCustom" Text="自定义" GroupName="SortPageFilter"
+                                             CommandParameter="Custom" Click="FilterPreset_Click" />
+                        <MenuFlyoutSeparator />
+                        <!-- 自定义：勾选=只显示这些状态 -->
+                        <ToggleMenuFlyoutItem x:Name="IncludeNone" Text="未标记" CommandParameter="None" Click="FilterState_Click" />
+                        <ToggleMenuFlyoutItem x:Name="IncludePlaying" Text="游玩中" CommandParameter="Playing" Click="FilterState_Click" />
+                        <ToggleMenuFlyoutItem x:Name="IncludePlayed" Text="已玩过" CommandParameter="Played" Click="FilterState_Click" />
+                        <ToggleMenuFlyoutItem x:Name="IncludeShelved" Text="搁置" CommandParameter="Shelved" Click="FilterState_Click" />
+                        <ToggleMenuFlyoutItem x:Name="IncludeAbandoned" Text="抛弃" CommandParameter="Abandoned" Click="FilterState_Click" />
+                        <ToggleMenuFlyoutItem x:Name="IncludeWantToPlay" Text="想玩" CommandParameter="WantToPlay" Click="FilterState_Click" />
                     </MenuFlyout>
                 </AppBarButton.Flyout>
             </AppBarButton>
