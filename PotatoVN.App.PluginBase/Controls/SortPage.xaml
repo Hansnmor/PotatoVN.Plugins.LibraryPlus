@@ -137,10 +137,9 @@
                              Checked="Range_Click" />
             </StackPanel>
 
-            <!-- 统计（跟随当前可见列表）：时长分布 / 预计总时长 / 完成度 / 时长未知数 -->
+            <!-- 统计（跟随当前可见列表）：预计总时长 / 完成度 / 时长未知数 -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16"
                         HorizontalAlignment="Right" VerticalAlignment="Center">
-                <TextBlock x:Name="DurationDistributionText" Style="{ThemeResource BodyTextStyle}" />
                 <TextBlock x:Name="TotalTimeText" Style="{ThemeResource BodyTextStyle}" />
                 <TextBlock x:Name="ProgressText" Style="{ThemeResource BodyTextStyle}" />
                 <TextBlock x:Name="UnknownTimeText" Style="{ThemeResource BodyTextStyle}" />
