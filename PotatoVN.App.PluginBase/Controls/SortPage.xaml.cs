@@ -393,11 +393,11 @@ public sealed partial class SortPage : Page
 
         UnknownTimeText.Text = $"{unknown} 款时长未知";
 
-        // 内容分类：萌/剧情/拔/同人/其他
+        // 内容分类：萌作/剧情作/拔作/同人作/其他（括号跟在"共 X 款游戏"后，表示对当前列表的总结）
         string[] order = { nameof(GalgameCategory.Moe), nameof(GalgameCategory.Story), nameof(GalgameCategory.Nukige),
             nameof(GalgameCategory.Doujin), nameof(GalgameCategory.Other) };
-        CategoryStatsText.Text = string.Join(" · ",
-            order.Select(key => $"{GalgameClassifier.GetDisplayName(Enum.Parse<GalgameCategory>(key))} {categoryCounts.GetValueOrDefault(Enum.Parse<GalgameCategory>(key))}"));
+        CategoryStatsText.Text = $"（{string.Join(" · ",
+            order.Select(key => $"{GalgameClassifier.GetDisplayName(Enum.Parse<GalgameCategory>(key))} {categoryCounts.GetValueOrDefault(Enum.Parse<GalgameCategory>(key))}"))}）";
     }
 
     #endregion

@@ -105,12 +105,16 @@
                 </AppBarButton.Flyout>
             </AppBarButton>
             <CommandBar.Content>
-                <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"
-                           Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"
+                               Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />
+                    <TextBlock x:Name="CategoryStatsText" VerticalAlignment="Center"
+                               Style="{ThemeResource BodyTextStyle}" />
+                </StackPanel>
             </CommandBar.Content>
         </CommandBar>
 
-        <!-- 时长区间筛选（左）+ 内容分类筛选（中）+ 时长统计（右） -->
+        <!-- 时长区间筛选（左）+ 时长统计（右） -->
         <Grid Grid.Row="1" Margin="12,4,16,4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -142,9 +146,17 @@
                              Checked="Range_Click" />
             </StackPanel>
 
-            <!-- 内容分类按钮组：萌作/剧情作/拔作/同人作/其他（与时长区间、状态筛选 AND 联动） -->
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
-                        Margin="20,0,0,0" VerticalAlignment="Center">
+            <!-- 统计（跟随当前可见列表）：预计总时长 / 完成度 / 时长未知数 -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="16"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock x:Name="TotalTimeText" Style="{ThemeResource BodyTextStyle}" />
+                <TextBlock x:Name="ProgressText" Style="{ThemeResource BodyTextStyle}" />
+                <TextBlock x:Name="UnknownTimeText" Style="{ThemeResource BodyTextStyle}" />
+            </StackPanel>
+
+            <!-- 内容分类按钮组：单独一行（与时长区间上下排列对齐左侧），与时长区间、状态筛选 AND 联动 -->
+            <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="4"
+                        Margin="0,6,0,0" VerticalAlignment="Center">
                 <RadioButton x:Name="CategoryAll" Content="全部" GroupName="GameCategory" Tag="All"
                              Checked="Category_Click" />
                 <RadioButton x:Name="CategoryMoe" Content="萌作" GroupName="GameCategory" Tag="Moe"
@@ -158,18 +170,6 @@
                 <RadioButton x:Name="CategoryOther" Content="其他" GroupName="GameCategory" Tag="Other"
                              Checked="Category_Click" />
             </StackPanel>
-
-            <!-- 统计（跟随当前可见列表）：预计总时长 / 完成度 / 时长未知数 -->
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="16"
-                        HorizontalAlignment="Right" VerticalAlignment="Center">
-                <TextBlock x:Name="TotalTimeText" Style="{ThemeResource BodyTextStyle}" />
-                <TextBlock x:Name="ProgressText" Style="{ThemeResource BodyTextStyle}" />
-                <TextBlock x:Name="UnknownTimeText" Style="{ThemeResource BodyTextStyle}" />
-            </StackPanel>
-
-            <!-- 内容分类统计（萌/剧情/拔/同人/其他，跟随当前可见列表） -->
-            <TextBlock Grid.Row="1" Grid.ColumnSpan="3" x:Name="CategoryStatsText"
-                       Style="{ThemeResource BodyTextStyle}" Margin="0,6,0,0" />
         </Grid>
 
         <!-- 游戏网格（与原生一致的卡片尺寸与自适应布局） -->
