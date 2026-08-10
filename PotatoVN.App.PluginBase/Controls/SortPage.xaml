@@ -83,7 +83,7 @@
                  CheckBox/RadioButton 点击不关闭菜单，可一次勾选多个后统一生效 -->
             <AppBarButton Icon="Filter" Label="筛选">
                 <AppBarButton.Flyout>
-                    <Flyout Opened="FilterMenu_Opening" Closed="FilterMenu_Closing">
+                    <Flyout Opened="FilterMenu_Opening">
                         <StackPanel Spacing="2" MinWidth="200">
                             <RadioButton x:Name="FilterAll" Content="全部" GroupName="SortPageFilter" Tag="All"
                                          Click="FilterPreset_Click" />

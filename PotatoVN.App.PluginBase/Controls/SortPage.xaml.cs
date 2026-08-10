@@ -201,9 +201,6 @@ public sealed partial class SortPage : Page
         SyncFilterCheckBoxes();
     }
 
-    /// <summary>「筛选」弹出层关闭时统一应用筛选（自定义模式允许一次勾选多个状态后再生效）</summary>
-    private void FilterMenu_Closing(object sender, object e) => RefreshFilter();
-
     /// <summary>预设点击：全部 / 待玩 / 自定义。切到「全部/待玩」时清空自定义选择（切回自定义重新选）</summary>
     private void FilterPreset_Click(object sender, RoutedEventArgs e)
     {
@@ -217,8 +214,8 @@ public sealed partial class SortPage : Page
         RefreshFilter();
     }
 
-    /// <summary>自定义模式：勾选=只显示该状态；勾选时自动切到「自定义」模式。
-    /// CheckBox 点击不关闭菜单，可一次勾选多个；不立即刷新，菜单关闭时统一应用。</summary>
+    /// <summary>自定义模式：勾选=只显示该状态；实时生效（列表即时刷新）。
+    /// CheckBox 点击不关闭菜单，可继续勾选其他状态再即时更新。</summary>
     private void FilterState_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not CheckBox cb || cb.Tag is not string playTypeName) return;
@@ -237,7 +234,7 @@ public sealed partial class SortPage : Page
         FilterAll.IsChecked = false;
         FilterToPlay.IsChecked = false;
         FilterCustom.IsChecked = true;
-        // 不在此刷新：等菜单关闭时统一应用（见 FilterMenu_Closing）
+        RefreshFilter(); // 实时生效
     }
 
     /// <summary>把 6 个状态 CheckBox 的勾选态同步为当前自定义选择（仅自定义模式显示勾选）</summary>
