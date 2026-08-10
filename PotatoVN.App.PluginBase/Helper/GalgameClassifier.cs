@@ -102,11 +102,13 @@ public static class GalgameClassifier
     private static bool ContainsAnyAny(List<string> tags, string[] keywords)
         => tags.Any(tag => ContainsAny(tag, keywords));
 
-    /// <summary>拔作强信号词（硬核 R18 内容词 / 重口系）</summary>
+    /// <summary>拔作强信号词（硬核 R18 内容词 / 重口系）。
+    /// 注意：不要把常见角色属性词放进来——曾误加"萝莉"导致含萝莉角色的纯爱剧情作
+    /// （如 FAVORITE 的五彩斑斓的世界）被误判为拔作，2026-08-10 已移除。"幼女/双飞"更硬核保留。</summary>
     private static readonly string[] StrongNukigeKeywords =
     {
         "ntr", "凌辱", "调教", "触手", "轮奸", "强x", "肉便器", "孕ませ", "榨精", "援交",
-        "mind break", "humiliation", "萝莉", "幼女", "双飞",
+        "mind break", "humiliation", "幼女", "双飞",
     };
 
     /// <summary>拔作弱信号词（萌拔/甜拔常见标签，非决定性）</summary>
