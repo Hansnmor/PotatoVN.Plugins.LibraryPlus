@@ -35,11 +35,15 @@ public static class GalgameClassifier
         if (!HasVndbEntry(game)) return GalgameCategory.Doujin;
 
         // 有 VNDB 条目 → 按内容标签分类（用户确认 2026-08-10）：
-        // 判定顺序：强拔作 > 剧情作 > 显式拔作标签计数≥2 > 萌作 > 弱拔作 > 其他。
-        // 剧情作优先于拔作计数：R18 神作（如勇战魔物娘）打"拔作/eroge"标签是描述 R18 属性，
-        // 而"剧情/史诗级"描述作品性质，性质信号优先（拔作 = 以色情为核心驱动，剧情作 = 以剧情为核心）。
+        // 判定顺序：硬核拔作 > 强萌（废萌/萌作） > 题材组合拔作（loli/成熟题材+拔作标签） > 剧情作
+        //           > 拔作计数≥2 > 弱萌 > 弱拔作 > 其他。
+        // 强萌（废萌/萌作）拦截题材组合：Ambitious Mission FD2 带「废萌」+「萝莉+拔作」标签，
+        // 本质是废萌 FD（与 FD1 同类），应归萌作；夜羊社只有弱萌（纯爱/治愈）无「废萌」仍归拔作。
         List<string> tags = (game.Tags?.Value ?? []).Select(t => t.Trim().ToLowerInvariant()).ToList();
-        if (HasStrongNukigeSignal(tags)) return GalgameCategory.Nukige;
+        if (HasHardNukigeSignal(tags)) return GalgameCategory.Nukige;
+        if (HasStrongMoeSignal(tags)) return GalgameCategory.Moe;
+        if (HasLoliNukigeSignal(tags)) return GalgameCategory.Nukige;
+        if (HasMatureNukigeSignal(tags)) return GalgameCategory.Nukige;
         if (tags.Any(IsStoryTag)) return GalgameCategory.Story;
         if (CountExplicitNukigeTags(tags) >= 2) return GalgameCategory.Nukige;
         if (tags.Any(IsMoeTag)) return GalgameCategory.Moe;
@@ -68,24 +72,28 @@ public static class GalgameClassifier
         return ids is not null && ids.Length > vndbIndex && !string.IsNullOrWhiteSpace(ids[vndbIndex]);
     }
 
-    /// <summary>
-    /// 拔作强信号（命中即归拔作，即使同时有萌/剧情标签）：
-    /// 1) 硬核 R18 行为词（nukige/凌辱/触手/调教/轮奸/双飞 等）直接命中；
-    /// 2) 萝莉/幼女属性词 + 显式拔作标签（loli-nukige，如夜羊社）；
-    /// 3) 成熟题材词（人妻/母系/熟女/母）+ 显式拔作标签（中信号，用户确认 2026-08-10）——
-    ///    Mama×Holic 等母系拔作归拔作，而甜蜜女友2（校园/妹，无成熟题材词）不受影响。
-    /// </summary>
-    private static bool HasStrongNukigeSignal(List<string> tags)
+    /// <summary>拔作强信号·硬核 R18 行为词（直接命中即拔作，即使同时有萌/剧情标签）</summary>
+    private static bool HasHardNukigeSignal(List<string> tags)
     {
         if (tags.Any(t => t is "nukige" or "porn with plot" or "sex with plot" or "pornographic" or "explicit sex"))
             return true;
-        if (ContainsAnyAny(tags, HardNukigeKeywords)) return true;
-        if (ContainsAnyAny(tags, LoliAttributeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords))
-            return true;
-        if (ContainsAnyAny(tags, MatureThemeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords))
-            return true;
-        return false;
+        return ContainsAnyAny(tags, HardNukigeKeywords);
     }
+
+    /// <summary>萌作强信号（废萌/萌作 等明确萌向定性词）：在题材组合拔作之前拦截——
+    /// 带「废萌/萌作」标签的作品玩家认知即萌向，即使有「萝莉/幼女/人妻+拔作标签」组合也归萌作
+    ///（如 Ambitious Mission FD2 废萌 FD；夜羊社无「废萌/萌作」不受影响）</summary>
+    private static bool HasStrongMoeSignal(List<string> tags)
+        => tags.Any(t => t is "废萌" or "萌作" or "废萌作" or "moegame" or "moege");
+
+    /// <summary>拔作强信号·萝莉/幼女属性词 + 显式拔作标签（loli-nukige，如夜羊社）</summary>
+    private static bool HasLoliNukigeSignal(List<string> tags)
+        => ContainsAnyAny(tags, LoliAttributeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords);
+
+    /// <summary>拔作强信号·成熟题材词（人妻/母系/熟女/母）+ 显式拔作标签（中信号）——
+    /// Mama×Holic 等母系拔作归拔作，甜蜜女友2（校园/妹，无成熟题材词）不受影响</summary>
+    private static bool HasMatureNukigeSignal(List<string> tags)
+        => ContainsAnyAny(tags, MatureThemeKeywords) && ContainsAnyAny(tags, ExplicitNukigeTagKeywords);
 
     /// <summary>拔作弱信号（萌拔常见标签）：仅当无强拔、无萌/剧情信号时才归拔作</summary>
     private static bool HasWeakNukigeSignal(List<string> tags)
