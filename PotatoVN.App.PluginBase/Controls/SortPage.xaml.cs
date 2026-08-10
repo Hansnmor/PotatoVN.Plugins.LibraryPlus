@@ -191,56 +191,40 @@ public sealed partial class SortPage : Page
     private const string FilterModeToPlay = "ToPlay";
     private const string FilterModeCustom = "Custom";
 
-    /// <summary>「筛选」菜单打开时，同步预设单选与状态勾选态（仅在自定义模式下显示勾选）</summary>
+    /// <summary>「筛选」弹出层打开时，同步预设单选与状态勾选态（仅在自定义模式下显示勾选）</summary>
     private void FilterMenu_Opening(object sender, object e)
     {
         string mode = Plugin.Data.FilterMode;
         FilterAll.IsChecked = mode == FilterModeAll;
         FilterToPlay.IsChecked = mode == FilterModeToPlay;
         FilterCustom.IsChecked = mode == FilterModeCustom;
-
-        // 只有自定义模式才显示状态勾选；全部/待玩模式下勾选标记保持清除
-        // （自定义选择数据保留，切回自定义可恢复）
-        bool showTicks = mode == FilterModeCustom;
-        List<string> included = Plugin.Data.IncludedPlayTypes;
-        IncludeNone.IsChecked = showTicks && included.Contains("None");
-        IncludePlaying.IsChecked = showTicks && included.Contains("Playing");
-        IncludePlayed.IsChecked = showTicks && included.Contains("Played");
-        IncludeShelved.IsChecked = showTicks && included.Contains("Shelved");
-        IncludeAbandoned.IsChecked = showTicks && included.Contains("Abandoned");
-        IncludeWantToPlay.IsChecked = showTicks && included.Contains("WantToPlay");
+        SyncFilterCheckBoxes();
     }
 
-    /// <summary>「筛选」菜单关闭时统一应用筛选（自定义模式允许一次勾选多个状态后再生效）</summary>
-    private void FilterMenu_Closing(Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase sender,
-        Microsoft.UI.Xaml.Controls.Primitives.FlyoutBaseClosingEventArgs args) => RefreshFilter();
+    /// <summary>「筛选」弹出层关闭时统一应用筛选（自定义模式允许一次勾选多个状态后再生效）</summary>
+    private void FilterMenu_Closing(object sender, object e) => RefreshFilter();
 
-    /// <summary>预设点击：全部 / 待玩 / 自定义</summary>
+    /// <summary>预设点击：全部 / 待玩 / 自定义。切到「全部/待玩」时清空自定义选择（切回自定义重新选）</summary>
     private void FilterPreset_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not RadioMenuFlyoutItem item || item.CommandParameter is not string mode) return;
-        Plugin.Data.FilterMode = mode; // 持久化
-        // 切到「全部/待玩」时立即清除下方勾选标记（数据保留，切回自定义可恢复）
+        if (sender is not RadioButton rb || rb.Tag is not string mode) return;
         if (mode != FilterModeCustom)
         {
-            IncludeNone.IsChecked = false;
-            IncludePlaying.IsChecked = false;
-            IncludePlayed.IsChecked = false;
-            IncludeShelved.IsChecked = false;
-            IncludeAbandoned.IsChecked = false;
-            IncludeWantToPlay.IsChecked = false;
+            Plugin.Data.IncludedPlayTypes = new(); // 清空自定义选择（不再保留，切回自定义重新选）
+            SyncFilterCheckBoxes();
         }
+        Plugin.Data.FilterMode = mode; // 持久化
         RefreshFilter();
     }
 
     /// <summary>自定义模式：勾选=只显示该状态；勾选时自动切到「自定义」模式。
-    /// 不立即刷新——等菜单关闭时统一应用，支持一次勾选多个状态。</summary>
+    /// CheckBox 点击不关闭菜单，可一次勾选多个；不立即刷新，菜单关闭时统一应用。</summary>
     private void FilterState_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not ToggleMenuFlyoutItem item || item.CommandParameter is not string playTypeName) return;
+        if (sender is not CheckBox cb || cb.Tag is not string playTypeName) return;
 
         List<string> included = Plugin.Data.IncludedPlayTypes;
-        if (item.IsChecked)
+        if (cb.IsChecked == true)
         {
             if (!included.Contains(playTypeName)) included.Add(playTypeName);
         }
@@ -254,6 +238,19 @@ public sealed partial class SortPage : Page
         FilterToPlay.IsChecked = false;
         FilterCustom.IsChecked = true;
         // 不在此刷新：等菜单关闭时统一应用（见 FilterMenu_Closing）
+    }
+
+    /// <summary>把 6 个状态 CheckBox 的勾选态同步为当前自定义选择（仅自定义模式显示勾选）</summary>
+    private void SyncFilterCheckBoxes()
+    {
+        bool showTicks = Plugin.Data.FilterMode == FilterModeCustom;
+        List<string> included = Plugin.Data.IncludedPlayTypes;
+        IncludeNone.IsChecked = showTicks && included.Contains("None");
+        IncludePlaying.IsChecked = showTicks && included.Contains("Playing");
+        IncludePlayed.IsChecked = showTicks && included.Contains("Played");
+        IncludeShelved.IsChecked = showTicks && included.Contains("Shelved");
+        IncludeAbandoned.IsChecked = showTicks && included.Contains("Abandoned");
+        IncludeWantToPlay.IsChecked = showTicks && included.Contains("WantToPlay");
     }
 
     /// <summary>统一刷新过滤：状态筛选（包含式）+ 时长区间，两个条件为 AND 关系</summary>
