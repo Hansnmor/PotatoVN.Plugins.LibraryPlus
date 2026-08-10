@@ -6,11 +6,11 @@ using GalgameManager.Models;
 namespace PotatoVN.App.PluginBase.Helper;
 
 /// <summary>
-/// 游戏内容分类：萌作 / 剧情作 / 拔作 / 同人·引擎作 / 其他。
+/// 游戏内容分类：萌作 / 剧情作 / 拔作 / 同人作 / 其他。
 /// 数据源全部来自本地（游戏搜刮时已随 Galgame 下载）：Galgame.Tags（VNDB 中文翻译标签
 /// 与 Bangumi 中文用户标签的混合，也可能含英文原样）与 Galgame.Engine。
-/// 优先级：拔作 &gt; 剧情作 &gt; 萌作 &gt; 同人·引擎作 &gt; 其他——RPG Maker 等引擎作也按内容标签分类，
-/// 只有无任何内容信号时才归入「同人·引擎作」；无任何信号归「其他」（诚实兜底）。
+/// 优先级：同人作（引擎/同人信号） &gt; 拔作 &gt; 剧情作 &gt; 萌作 &gt; 其他——
+/// RPG Maker、Wolf RPG、Tyrano 等引擎工具（或同人标签）优先归同人作；无任何信号归「其他」（诚实兜底）。
 /// </summary>
 public enum GalgameCategory
 {
@@ -29,10 +29,13 @@ public static class GalgameClassifier
         List<string> tags = (game.Tags?.Value ?? []).Select(t => t.Trim().ToLowerInvariant()).ToList();
         string engine = (game.Engine?.Value ?? string.Empty).Trim().ToLowerInvariant();
 
+        // 引擎/同人信号最优先：RPG Maker、Wolf RPG、Tyrano 等引擎工具（或标签含同人/rpg）
+        // 基本就是同人小品/小黄油，优先归同人作（用户确认 2026-08-10）
+        if (tags.Any(IsDoujinTag) || IsEngineTag(engine)) return GalgameCategory.Doujin;
+
         if (tags.Any(IsNukigeTag)) return GalgameCategory.Nukige;
         if (tags.Any(IsStoryTag)) return GalgameCategory.Story;
         if (tags.Any(IsMoeTag)) return GalgameCategory.Moe;
-        if (tags.Any(IsDoujinTag) || IsEngineTag(engine)) return GalgameCategory.Doujin;
         return GalgameCategory.Other;
     }
 
