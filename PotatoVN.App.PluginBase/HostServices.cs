@@ -17,6 +17,7 @@ internal static class HostServices
 {
     private const string HostAssemblyName = "GalgameManager";
     private const string ServiceTypeName = "GalgameManager.Services.GalgameCollectionService";
+    private const string ServiceInterfaceName = "GalgameManager.Contracts.Services.IGalgameCollectionService";
     private const string PvnExceptionTypeName = "GalgameManager.Models.PvnException";
 
     private static object? _service;
@@ -34,8 +35,13 @@ internal static class HostServices
         if (appType is null || serviceType is null)
             throw new InvalidOperationException("Host service type not found");
 
+        // 注意：App.GetService<T>() 的泛型参数必须是 DI 容器注册的类型（宿主注册的是接口
+        // IGalgameCollectionService，不是具体类）——传具体类会抛 "needs to be registered"。
+        // 实例用接口解析；方法反射仍从具体类拿（运行时实例类型匹配，可正常 Invoke）。
         MethodInfo? getService = appType.GetMethod("GetService", BindingFlags.Public | BindingFlags.Static);
-        object? service = getService?.MakeGenericMethod(serviceType).Invoke(null, null)
+        Type? serviceInterface = host.GetType(ServiceInterfaceName)
+            ?? throw new InvalidOperationException("Host service interface not found");
+        object? service = getService?.MakeGenericMethod(serviceInterface).Invoke(null, null)
             ?? throw new InvalidOperationException("Cannot resolve host service");
         _saveGame = serviceType.GetMethod("SaveGalgameAsync");
         _removeGame = serviceType.GetMethod("RemoveGalgame");

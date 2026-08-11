@@ -453,7 +453,10 @@ public sealed partial class SortPage : Page
         }
         catch (Exception ex)
         {
-            Plugin.HostApi.Info(InfoBarSeverity.Error, msg: $"下载游戏信息失败：{ex.Message}");
+            // 反射 Invoke 会把宿主方法内部异常包装成 TargetInvocationException，取 InnerException 显示真实原因
+            Exception real = ex is System.Reflection.TargetInvocationException { InnerException: { } inner } ? inner : ex;
+            Plugin.HostApi.Log(InfoBarSeverity.Warning, $"下载游戏信息失败: {ex}\nInner: {real}");
+            Plugin.HostApi.Info(InfoBarSeverity.Error, msg: $"下载游戏信息失败：{real.Message}");
         }
     }
 
