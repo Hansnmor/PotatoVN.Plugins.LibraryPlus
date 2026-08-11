@@ -47,6 +47,28 @@ public sealed partial class SortPage : Page
         ApplySort();
         UpdateCountText();
         UpdateStatsText();
+
+        // 搜刮信息完成后自动刷新列表（与原生页行为对齐，保留当前排序/筛选状态）
+        HostServices.SubscribePhrased(OnHostPhrased);
+        Unloaded += (_, _) => HostServices.UnsubscribePhrased(); // 页面销毁退订，防事件泄漏
+    }
+
+    /// <summary>宿主搜刮完成事件：重新拉数据并刷新，保留排序/筛选/区间/分类状态</summary>
+    private void OnHostPhrased()
+    {
+        Plugin.HostApi.InvokeOnMainThread(() =>
+        {
+            try
+            {
+                _source.Source = Plugin.HostApi.GetAllGames();
+                ApplySort();
+                RefreshFilter();
+            }
+            catch
+            {
+                // 静默：刷新失败不影响页面
+            }
+        });
     }
 
     #region 排序

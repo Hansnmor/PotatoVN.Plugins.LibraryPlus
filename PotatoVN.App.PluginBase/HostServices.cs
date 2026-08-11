@@ -146,6 +146,44 @@ internal static class HostServices
 
     private static Type ServiceType() => Service.GetType();
 
+    /// <summary>当前已订阅宿主 PhrasedEvent 的处理器（单一，页面重建会覆盖）</summary>
+    private static Action? _phrasedSubscriber;
+
+    /// <summary>
+    /// 订阅宿主 GalgameCollectionService.PhrasedEvent（搜刮信息完成时触发）。
+    /// 用于插件页在搜刮完成后自动刷新列表（与原生页行为对齐）。失败时静默。
+    /// </summary>
+    public static void SubscribePhrased(Action handler)
+    {
+        try
+        {
+            EventInfo? evt = ServiceType().GetEvent("PhrasedEvent");
+            if (evt is null) return;
+            evt.AddEventHandler(Service, handler);
+            _phrasedSubscriber = handler;
+        }
+        catch
+        {
+            // 静默
+        }
+    }
+
+    /// <summary>退订宿主 PhrasedEvent（页面销毁时调用，防事件泄漏）</summary>
+    public static void UnsubscribePhrased()
+    {
+        try
+        {
+            if (_phrasedSubscriber is null) return;
+            EventInfo? evt = ServiceType().GetEvent("PhrasedEvent");
+            evt?.RemoveEventHandler(Service, _phrasedSubscriber);
+            _phrasedSubscriber = null;
+        }
+        catch
+        {
+            // 静默
+        }
+    }
+
     /// <summary>宿主 GameParseType 枚举的 All 常量（int.MaxValue）</summary>
     private const int GameParseTypeAll = int.MaxValue;
 }
