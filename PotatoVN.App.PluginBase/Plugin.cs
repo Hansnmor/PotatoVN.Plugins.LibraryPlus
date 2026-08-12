@@ -31,6 +31,18 @@ namespace PotatoVN.App.PluginBase
         /// <summary>kungal 搜刮器静态实例（SortPage 等无插件实例上下文的位置使用；与宿主注册的是同一实例）</summary>
         internal static KungalPhraser StaticPhraser { get; } = new();
 
+        // ===== 批量搜刮全局状态（页面销毁重建后恢复锁定与进度用） =====
+
+        /// <summary>批量搜刮是否进行中（全局共享——页面导航销毁后新页面据此恢复锁定 UI）</summary>
+        internal static bool IsBatchScraping;
+
+        /// <summary>批量搜刮进度文本（"搜刮中 3/50：游戏名"），新页面恢复显示用</summary>
+        internal static string BatchStatus = "";
+
+        /// <summary>批量状态变化事件（页面订阅以实时更新进度；页面销毁后新页面构造时读取当前值恢复）。
+        /// 用委托字段而非 event 关键字：SortPage 需从外部 Invoke（event 只能声明类内触发）</summary>
+        internal static Action? BatchStatusChanged;
+
         /// <summary>kungal 搜刮器实例（插件页「更多搜刮」直接复用，配置改此实例）</summary>
         public KungalPhraser KungalPhraser => StaticPhraser;
 

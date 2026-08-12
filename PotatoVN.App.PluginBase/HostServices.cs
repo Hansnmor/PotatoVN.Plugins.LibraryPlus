@@ -144,6 +144,47 @@ internal static class HostServices
         }
     }
 
+    /// <summary>
+    /// 反射读取宿主 Bangumi OAuth token（BgmAccount.BangumiAccessToken，设置键 bangumiAccount）。
+    /// 用于插件调 Bangumi API 拉 tag 投票数据（匿名 API 对部分条目 404，登录后才全量可见）。
+    /// 未登录/读取失败返回 null，调用方跳过 Bangumi 采集（不影响 kungal 功能）。
+    /// </summary>
+    public static async Task<string?> GetBgmTokenAsync()
+    {
+        try
+        {
+            Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+            if (host is null) return null;
+            Type? appType = host.GetType("GalgameManager.App");
+            Type? settingsService = host.GetType("GalgameManager.Contracts.Services.ILocalSettingsService");
+            Type? bgmAccount = host.GetType("GalgameManager.Models.BgmAccount");
+            if (appType is null || settingsService is null || bgmAccount is null) return null;
+
+            MethodInfo? getService = appType.GetMethod("GetService", BindingFlags.Public | BindingFlags.Static);
+            object? svc = getService?.MakeGenericMethod(settingsService).Invoke(null, null);
+            if (svc is null) return null;
+
+            MethodInfo? read = settingsService.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(m => m.Name == "ReadSettingAsync" && m.IsGenericMethodDefinition)
+                ?.MakeGenericMethod(bgmAccount);
+            if (read is null) return null;
+            // ReadSettingAsync<T>(key, isLarge=false, converters=null, typeNameHandling=false)
+            var task = (Task)read.Invoke(svc, new object[] { "bangumiAccount", false, null, false })!;
+            await task.ConfigureAwait(false);
+            object? account = task.GetType().GetProperty("Result")?.GetValue(task);
+            if (account is null) return null;
+            // BangumiAccessToken 是公开字段
+            FieldInfo? tokenField = bgmAccount.GetField("BangumiAccessToken");
+            string? token = tokenField?.GetValue(account) as string;
+            return string.IsNullOrEmpty(token) ? null : token;
+        }
+        catch
+        {
+            return null; // 未登录/反射失败 → 跳过 Bangumi 采集
+        }
+    }
+
     private static Type ServiceType() => Service.GetType();
 
     /// <summary>当前已订阅宿主 PhrasedEvent 的处理器（单一，页面重建会覆盖）</summary>
@@ -177,6 +218,36 @@ internal static class HostServices
             EventInfo? evt = ServiceType().GetEvent("PhrasedEvent");
             evt?.RemoveEventHandler(Service, _phrasedSubscriber);
             _phrasedSubscriber = null;
+        }
+        catch
+        {
+            // 静默
+        }
+    }
+
+    /// <summary>
+    /// 反射触发宿主 PhrasedEvent（批量搜刮完成时调用）：
+    /// 让所有订阅了该事件的页面（主页/详情页/重建后的扩展库页）统一刷新——
+    /// 解决"批量进行中切走页面，切回来看到中间状态"的问题。失败时静默。
+    /// </summary>
+    public static void TriggerPhrased()
+    {
+        try
+        {
+            FieldInfo? field = ServiceType().GetField("PhrasedEvent",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (field?.GetValue(Service) is not Action handler) return;
+            Plugin.HostApi.InvokeOnMainThread(() =>
+            {
+                try
+                {
+                    handler();
+                }
+                catch
+                {
+                    // 静默：刷新失败不影响批量结果
+                }
+            });
         }
         catch
         {

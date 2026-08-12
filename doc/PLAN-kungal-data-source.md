@@ -268,8 +268,35 @@ LibraryPlus（现有工程）
 7. **IsLock 语义**：锁 = 绝对不动（简介赋值被 setter 拦截、tags 需主动检查）——批量与宿主行为已对齐；批量 InfoBar 汇总含「简介锁定未动 X」。
 8. **`Galgames.ToList()` 是引用浅拷贝**：GetAllGames 返回宿主实例引用，插件改对象+`SaveGalgameAsync`（Upsert）即持久化——批量修改直接生效，无需宿主流程。
 
-### 9.3 遗留/后续
+### 9.3 分类器最终形态（M3 定稿，2026-08-12）
+
+**内容轴判定链（逐层降级，游戏独立）**：
+```
+① 手动覆盖（UserCategory 字典，右键菜单「分类」设定）
+② kungal「拔作」tag 否决（精确匹配「拔作」/「拔作向」——排除「拔作(笑)」等梗标签）
+③ kungal 投票（拆票：galgame_type 多选属性 1/N；最高拆票 ≥10 独占；少票与热度/Bangumi 融合：投票×3000+热度+Bgm×50）
+④ kungal 热度（content+sexual 类 tag，仅萌/剧词——行为词退出拔作判定）
+⑤ fallback 旧规则 v4.7（Galgame.Tags + VNDB ID）
+```
+
+**形态轴**：kungal 类型词 tag（SLG/RPG/模拟…）+ 非 ADV 引擎（RPG Maker 等）→ 非传统ADV；否则传统ADV。
+
+**M3 新增踩坑**：
+1. **kungal sexual 类 tag 被匿名 API 过滤**（M0 验证漏测——SFW 游戏无 sexual tag，拔作游戏带 cookie 才有）——插件 KungalClient 已带 cookie，分类器需统计 content+sexual。
+2. **Bangumi「拔作」tag 否决（②b）是错误设计**：Bangumi 用户标签的「拔作」= "有成人内容"通用标注（几乎全部 R18 galgame 都被标），实测 21/30 误判来自它——已删除。Bangumi 信号只保留词表分（萌/剧词加权）。
+3. **「拔作」tag 必须精确匹配**：「拔作(笑)」（NUKITASHI 名字梗）等衍生词会误触发否决。
+4. **投票拆票语义**：galgame_type 是多选属性标签（勾 plot = 有剧情属性 ≠ 剧情作）——拆票（1/N）+ 独占阈值（≥10）+ 少票融合，避免属性提及数被当类型投票。
+5. **行为词不判拔作**：体位/手交/口交/乳交等 sexual 词在所有 R18 游戏普遍（废萌/剧情作同样密集，实测永不枯萎 13 个/兰斯 74 个）——判别力差，只能做萌/剧词表，不参与拔作判定。
+6. **萌词表排除题材词**：幼驯染/学校/学园/傲娇等题材词在剧情作同样常见（交响乐之雨/白色相簿）——只留类型词（废萌/纯爱/治愈/日常/恋爱/喜剧…）。
+7. **PluginData 字典赋值必须新建实例**：`Plugin.Data.X = dict`（同一引用）时 MVVM Toolkit SetProperty 引用相等判断不触发 PropertyChanged → 持久化不执行（数据只在内存）——`new Dictionary<>(原)` 再赋值。
+8. **批量进行中页面导航**：async void 不取消（后台继续），但页面销毁后控件访问抛 COMException（finally 逃逸会中断批量）——全局批量状态（Plugin.IsBatchScraping/BatchStatus/BatchStatusChanged）+ 页面重建恢复 + 控件访问全防御 + 完成 TriggerPhrased 全页刷新。
+9. **Bangumi API 匿名受限**：部分条目匿名 404（需登录）——用宿主 BgmAccount token（反射读设置 bangumiAccount）鉴权。
+
+**已知边界（手动覆盖兜底）**：幸福的二人房（kungal/Bangumi 均无拔作信号）、茂伸奇谈 HE（投票偏剧 vs 用户认知萌）、兰斯（sexual tag 全站最密）、萌拔（公园恶作剧模拟器/后宫双子洛丽塔——有 kungal「拔作」tag）。
+
+### 9.4 遗留/后续
 
 - 混合搜刮清 kungal tag：接受（工作流引导），如需强改需 harmony（打包黑名单排除 0Harmony，ALC 加载有障碍，暂不破例）
 - 简介规则开关（kungal 优先 vs 保护已有中文）：当前默认保护，可后续加设置
-- 批量完成后的 UI 刷新走 `OnHostPhrased`（重新 GetAllGames）
+- 单游戏搜刮不采集 Bangumi（仅插件批量流程）——如需可后续扩展
+- `分类[拔作]` 诊断日志保留（排查分类问题用），确认稳定后可清理

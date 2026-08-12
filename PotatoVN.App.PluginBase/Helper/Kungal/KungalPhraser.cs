@@ -171,6 +171,7 @@ public class KungalPhraser : IGalInfoPhraser
             Gid = detail.Id,
             VndbId = detail.VndbId,
             FetchedAt = DateTime.Now,
+            Engine = detail.Engine.Select(e => e.Name ?? "").Where(n => n != "").ToList(),
             Tags = detail.Tag.Select(t => new KungalTagData
             {
                 Name = t.Name ?? "",
@@ -179,11 +180,15 @@ public class KungalPhraser : IGalInfoPhraser
                 SpoilerLevel = t.SpoilerLevel,
             }).ToList(),
         };
-        // 用户类型投票：每个评分可勾多个 galgame_type
+        // 用户类型投票：galgame_type 是多选属性标签，拆票采集（勾 N 个类型各计 1/N）
         foreach (var rating in detail.Ratings)
         {
-            foreach (string type in rating.GalgameType ?? [])
-                data.TypeVotes[type] = data.TypeVotes.GetValueOrDefault(type) + 1;
+            List<string>? types = rating.GalgameType;
+            if (types is null || types.Count == 0) continue;
+            double split = 1.0 / types.Count;
+            foreach (string type in types)
+                data.TypeVotes[type] = data.TypeVotes.GetValueOrDefault(type) + split;
+            data.RatingCount++;
         }
         return data;
     }

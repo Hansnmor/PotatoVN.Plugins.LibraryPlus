@@ -12,6 +12,7 @@ using GalgameManager.WinApp.Base.Contracts.NavigationApi.NavigateParameters;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using PotatoVN.App.PluginBase.Helper;
+using PotatoVN.App.PluginBase.Helper.Bangumi;
 using PotatoVN.App.PluginBase.Helper.Kungal;
 using PotatoVN.App.PluginBase.Models;
 
@@ -44,10 +45,21 @@ public sealed partial class SortPage : Page
         // 恢复持久化的页面状态（跨页面重建 / 应用重启保持）
         RestoreRangeState();
         RestoreCategoryState();
+        RestoreFormState();
         RestoreSortMenuState();
         ApplySort();
         UpdateCountText();
         UpdateStatsText();
+
+        // 批量搜刮进行中（切走再切回）：恢复锁定 UI + 进度显示，并订阅实时更新
+        if (Plugin.IsBatchScraping)
+        {
+            GameGridView.IsEnabled = false;
+            GameGridView.Opacity = 0.5; // 变灰特效（GalgamePrefab 非 Control，IsEnabled 无视觉降级）
+            BatchProgressText.Text = Plugin.BatchStatus;
+            Plugin.BatchStatusChanged += OnBatchStatusChanged;
+            Unloaded += (_, _) => Plugin.BatchStatusChanged -= OnBatchStatusChanged;
+        }
 
         // 搜刮信息完成后自动刷新列表（与原生页行为对齐，保留当前排序/筛选状态）
         HostServices.SubscribePhrased(OnHostPhrased);
@@ -291,15 +303,24 @@ public sealed partial class SortPage : Page
         if (obj is not Galgame game) return false;
         if (!MatchesPlayTypeFilter(game)) return false;
         if (!MatchesCategory(game)) return false;
+        if (!MatchesForm(game)) return false;
         return MatchesRange(game);
     }
 
-    /// <summary>内容分类匹配（萌作/剧情作/拔作/同人作/其他），All=全部；与时长区间、状态筛选 AND 联动</summary>
+    /// <summary>内容轴分类匹配（萌作/剧情作/拔作/其他），All=全部；与形态轴、时长区间、状态筛选 AND 联动</summary>
     private bool MatchesCategory(Galgame game)
     {
         string key = Plugin.Data.CategoryKey;
         if (key == CategoryKeyAll) return true;
-        return GalgameClassifier.Classify(game).ToString() == key;
+        return GalgameClassifier.ClassifyContent(game).ToString() == key;
+    }
+
+    /// <summary>形态轴分类匹配（传统ADV/非传统ADV），All=全部</summary>
+    private bool MatchesForm(Galgame game)
+    {
+        string key = Plugin.Data.FormKey;
+        if (key == CategoryKeyAll) return true;
+        return GalgameClassifier.ClassifyForm(game).ToString() == key;
     }
 
     /// <summary>内容分类按钮点击：持久化并刷新列表与统计</summary>
@@ -310,16 +331,34 @@ public sealed partial class SortPage : Page
         RefreshFilter();
     }
 
-    /// <summary>从持久化数据恢复内容分类按钮选中状态</summary>
+    /// <summary>形态分类按钮点击：持久化并刷新列表与统计</summary>
+    private void Form_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton rb || rb.Tag is not string key) return;
+        Plugin.Data.FormKey = key; // 持久化
+        RefreshFilter();
+    }
+
+    /// <summary>从持久化数据恢复内容分类按钮选中状态（旧版「Doujin」键已退役，兜底置为全部）</summary>
     private void RestoreCategoryState()
     {
         string key = Plugin.Data.CategoryKey;
+        if (key is not ("All" or "Moe" or "Story" or "Nukige" or "Other")) key = "All";
         CategoryAll.IsChecked = key == CategoryKeyAll;
         CategoryMoe.IsChecked = key == "Moe";
         CategoryStory.IsChecked = key == "Story";
         CategoryNukige.IsChecked = key == "Nukige";
-        CategoryDoujin.IsChecked = key == "Doujin";
         CategoryOther.IsChecked = key == "Other";
+    }
+
+    /// <summary>从持久化数据恢复形态分类按钮选中状态</summary>
+    private void RestoreFormState()
+    {
+        string key = Plugin.Data.FormKey;
+        if (key is not ("All" or "TraditionalAdv" or "NonTraditionalAdv")) key = "All";
+        FormAll.IsChecked = key == CategoryKeyAll;
+        FormTraditional.IsChecked = key == "TraditionalAdv";
+        FormNonTraditional.IsChecked = key == "NonTraditionalAdv";
     }
 
     /// <summary>
@@ -394,20 +433,24 @@ public sealed partial class SortPage : Page
     /// <summary>
     /// 更新统计条（跟随当前可见列表）：待玩总时长 / 完成度（基于全库） / 时长未知数。
     /// 完成度基于全库——排除已玩过后可见列表已玩数为 0，用全库才有意义。
+    /// 双轴分类统计：内容轴（萌/剧情/拔/其他）+ 形态轴（传统ADV/非传统ADV）。
     /// </summary>
     private void UpdateStatsText()
     {
         long totalMinutes = 0;
         int unknown = 0;
         var categoryCounts = new Dictionary<GalgameCategory, int>();
+        var formCounts = new Dictionary<GalgameForm, int>();
         foreach (Galgame g in _source.OfType<Galgame>())
         {
             long? minutes = ExpectedPlayTimeHelper.ParseMinutes(g.ExpectedPlayTime?.Value);
             if (minutes is null) unknown++;
             else totalMinutes += minutes.Value;
 
-            GalgameCategory cat = GalgameClassifier.Classify(g);
+            GalgameCategory cat = GalgameClassifier.ClassifyContent(g);
             categoryCounts[cat] = categoryCounts.GetValueOrDefault(cat) + 1;
+            GalgameForm form = GalgameClassifier.ClassifyForm(g);
+            formCounts[form] = formCounts.GetValueOrDefault(form) + 1;
         }
         TotalTimeText.Text = $"待玩总时长：{ExpectedPlayTimeHelper.FormatHours(totalMinutes)}";
 
@@ -416,16 +459,42 @@ public sealed partial class SortPage : Page
 
         UnknownTimeText.Text = $"{unknown} 款时长未知";
 
-        // 内容分类：萌作/剧情作/拔作/同人作/其他（括号跟在"共 X 款游戏"后，表示对当前列表的总结）
+        // 内容轴：萌作/剧情作/拔作/其他（括号跟在"共 X 款游戏"后，表示对当前列表的总结）
         string[] order = { nameof(GalgameCategory.Moe), nameof(GalgameCategory.Story), nameof(GalgameCategory.Nukige),
-            nameof(GalgameCategory.Doujin), nameof(GalgameCategory.Other) };
+            nameof(GalgameCategory.Other) };
+        // 形态轴：传统ADV / 非传统ADV
+        string[] formOrder = { nameof(GalgameForm.TraditionalAdv), nameof(GalgameForm.NonTraditionalAdv) };
         CategoryStatsText.Text = $"（{string.Join(" · ",
-            order.Select(key => $"{GalgameClassifier.GetDisplayName(Enum.Parse<GalgameCategory>(key))} {categoryCounts.GetValueOrDefault(Enum.Parse<GalgameCategory>(key))}"))}）";
+            order.Select(key => $"{GalgameClassifier.GetDisplayName(Enum.Parse<GalgameCategory>(key))} {categoryCounts.GetValueOrDefault(Enum.Parse<GalgameCategory>(key))}"))}" +
+            $"｜{string.Join(" · ",
+            formOrder.Select(key => $"{GalgameClassifier.GetFormDisplayName(Enum.Parse<GalgameForm>(key))} {formCounts.GetValueOrDefault(Enum.Parse<GalgameForm>(key))}"))}）";
     }
 
     #endregion
 
     #region 批量搜刮（kungal）
+
+    /// <summary>
+    /// 批量状态变化订阅（页面重建后恢复进度显示用）。
+    /// 批量结束时（IsBatchScraping 清 false）同时恢复锁定与变灰——
+    /// 重建页面在批量中订阅，旧实例 finally 的恢复只作用于旧网格，新网格靠这里恢复。
+    /// </summary>
+    private void OnBatchStatusChanged()
+    {
+        try
+        {
+            BatchProgressText.Text = Plugin.BatchStatus;
+            if (!Plugin.IsBatchScraping && !GameGridView.IsEnabled)
+            {
+                GameGridView.IsEnabled = true;
+                GameGridView.Opacity = 1.0;
+            }
+        }
+        catch
+        {
+            // 页面已销毁，忽略
+        }
+    }
 
     /// <summary>多选开关：开启后网格进入多选模式（勾选），批量搜刮优先作用于选中游戏</summary>
     private void MultiSelectToggle_Click(object sender, RoutedEventArgs e)
@@ -492,6 +561,18 @@ public sealed partial class SortPage : Page
 
         // 防重入：批量进行中禁用按钮，finally 恢复
         if (sender is AppBarButton scrapeButton) scrapeButton.IsEnabled = false;
+        // 批量期间禁用网格点击（防止导航销毁页面——宿主导航不取消异步方法，
+        // 页面销毁后控件赋值会抛 COMException，async void 未处理异常会崩宿主）
+        GameGridView.IsEnabled = false;
+        GameGridView.Opacity = 0.5; // 变灰特效
+        // 全局批量状态（页面切走再切回时恢复锁定与进度）
+        Plugin.IsBatchScraping = true;
+        Plugin.BatchStatus = "批量搜刮准备中…";
+        Plugin.BatchStatusChanged?.Invoke();
+
+        // Bangumi tag 采集（需宿主已登录 Bangumi；token 拿不到则跳过，不影响 kungal 功能）
+        var bgmClient = new BgmClient { Token = await HostServices.GetBgmTokenAsync() };
+        int bgmOk = 0;
 
         int ok = 0, noMatch = 0, fail = 0, locked = 0;
         try
@@ -499,9 +580,33 @@ public sealed partial class SortPage : Page
             for (int i = 0; i < games.Count; i++)
             {
                 Galgame game = games[i];
-                BatchProgressText.Text = $"搜刮中 {i + 1}/{games.Count}：{game.Name.Value}";
+                // 更新全局进度（新页面/旧页面都可见）+ 本地进度文本（页面在才显示）
+                Plugin.BatchStatus = $"搜刮中 {i + 1}/{games.Count}：{game.Name.Value}";
+                Plugin.BatchStatusChanged?.Invoke();
+                try { BatchProgressText.Text = Plugin.BatchStatus; }
+                catch { /* 页面已销毁，忽略 */ }
                 try
                 {
+                    // Bangumi tag 投票采集（独立于 kungal——有 Bangumi ID 就拉，无论 kungal 成败）
+                    string? bgmId = game.Ids[(int)RssType.Bangumi];
+                    if (!string.IsNullOrEmpty(bgmId) && bgmId != "-1" &&
+                        int.TryParse(bgmId, out int bgmSubjectId))
+                    {
+                        List<BgmTag>? bgmTags = await bgmClient.GetTagsAsync(bgmSubjectId);
+                        if (bgmTags is { Count: > 0 })
+                        {
+                            // 必须新建字典实例再赋值：赋回同一引用时 SetProperty 判等不触发
+                            // PropertyChanged → SaveData 不执行（数据只在内存、不持久化）
+                            var bgmDict = new Dictionary<string, List<BgmTagData>>(Plugin.Data.BgmData)
+                            {
+                                [game.Uuid.ToString()] = bgmTags
+                                    .Select(t => new BgmTagData { Name = t.Name, Count = t.Count }).ToList()
+                            };
+                            Plugin.Data.BgmData = bgmDict;
+                            bgmOk++;
+                        }
+                    }
+
                     var fetched = await Plugin.StaticPhraser.FetchDetailAsync(game);
                     if (fetched == null)
                     {
@@ -511,9 +616,11 @@ public sealed partial class SortPage : Page
                     Galgame result = Plugin.StaticPhraser.BuildResult(game, fetched.Value.Detail);
                     if (ApplyBatchResult(game, result)) locked++;
 
-                    // 采集完整 kungal 数据到 PluginData（整体替换赋值触发持久化）
-                    var dict = Plugin.Data.KungalData;
-                    dict[game.Uuid.ToString()] = KungalPhraser.BuildKungalData(fetched.Value.Detail);
+                    // 采集完整 kungal 数据到 PluginData（新建实例赋值，保证触发持久化）
+                    var dict = new Dictionary<string, KungalGameData>(Plugin.Data.KungalData)
+                    {
+                        [game.Uuid.ToString()] = KungalPhraser.BuildKungalData(fetched.Value.Detail)
+                    };
                     Plugin.Data.KungalData = dict;
 
                     await HostServices.SaveGameAsync(game);
@@ -529,13 +636,26 @@ public sealed partial class SortPage : Page
         }
         finally
         {
-            BatchProgressText.Text = "";
-            if (sender is AppBarButton restoreButton) restoreButton.IsEnabled = true;
-            OnHostPhrased(); // 重新拉数据并刷新列表/统计
+            // 页面可能已被导航销毁：所有控件访问必须防御（已销毁控件的属性设置会抛 COMException，
+            // 若在 finally 里逃逸会中断 async void 方法——批量"看起来被打断"）
+            Plugin.IsBatchScraping = false; // 先清全局状态，再恢复 UI
+            Plugin.BatchStatus = "";
+            Plugin.BatchStatusChanged?.Invoke();
+            try { BatchProgressText.Text = ""; } catch { }
+            try { if (sender is AppBarButton restoreButton) restoreButton.IsEnabled = true; } catch { }
+            try { GameGridView.IsEnabled = true; GameGridView.Opacity = 1.0; } catch { }
+            try { OnHostPhrased(); } catch { } // 当前页面刷新（页面若已销毁则静默）
+            HostServices.TriggerPhrased(); // 触发宿主事件：主页/详情/重建后的扩展库页统一刷新
         }
 
         Plugin.HostApi.Info(InfoBarSeverity.Informational,
-            msg: $"批量搜刮完成：成功 {ok} / 简介锁定未动 {locked} / 未匹配 {noMatch} / 失败 {fail}");
+            title: "批量搜刮完成",
+            msg: $"成功 {ok} / 简介锁定未动 {locked} / 未匹配 {noMatch} / 失败 {fail}" +
+                 (bgmClient.Token != null ? $" / Bangumi 标签 {bgmOk} 款" : ""),
+            displayTimeMs: 10000); // 10 秒，可读完整汇总
+        Plugin.HostApi.Log(InfoBarSeverity.Informational,
+            $"批量搜刮完成: ok={ok} locked={locked} noMatch={noMatch} fail={fail} " +
+            $"bgmToken={bgmClient.Token != null} bgmOk={bgmOk}");
     }
 
     /// <summary>把搜刮结果应用到游戏对象（批量不走宿主 ParseAsync，自行实现合并）</summary>
@@ -593,7 +713,28 @@ public sealed partial class SortPage : Page
             StatusAbandoned.IsChecked = game.PlayType == PlayType.Abandoned;
             StatusWantToPlay.IsChecked = game.PlayType == PlayType.WantToPlay;
             OpenInExplorerItem.IsEnabled = game.IsLocalGame;
+
+            // 分类子菜单选中态：手动覆盖优先显示，否则"自动分类"
+            string? manual = Plugin.Data.UserCategory.GetValueOrDefault(game.Uuid.ToString());
+            CatAuto.IsChecked = string.IsNullOrEmpty(manual);
+            CatMoe.IsChecked = manual == nameof(GalgameCategory.Moe);
+            CatStory.IsChecked = manual == nameof(GalgameCategory.Story);
+            CatNukige.IsChecked = manual == nameof(GalgameCategory.Nukige);
+            CatOther.IsChecked = manual == nameof(GalgameCategory.Other);
         }
+    }
+
+    /// <summary>手动分类：设置/清除该游戏的分类覆盖（Auto=清除），持久化并即时刷新统计与筛选</summary>
+    private void SetCategory_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentGame is not { } game || sender is not RadioMenuFlyoutItem item ||
+            item.CommandParameter is not string key) return;
+
+        var dict = Plugin.Data.UserCategory;
+        if (key == "Auto") dict.Remove(game.Uuid.ToString());
+        else dict[game.Uuid.ToString()] = key;
+        Plugin.Data.UserCategory = dict; // 整体替换触发持久化
+        RefreshFilter(); // 内部会刷新统计与列表
     }
 
     private void ChangePlayStatus_Click(object sender, RoutedEventArgs e)

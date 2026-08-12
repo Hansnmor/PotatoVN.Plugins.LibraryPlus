@@ -27,6 +27,20 @@
                 <RadioMenuFlyoutItem x:Name="StatusWantToPlay" Text="想玩" GroupName="SortPagePlayStatus"
                                      CommandParameter="WantToPlay" Click="ChangePlayStatus_Click" />
             </MenuFlyoutSubItem>
+            <!-- 内容分类（手动覆盖自动分类，持久化生效；与右键菜单同款单选组） -->
+            <MenuFlyoutSubItem Text="分类">
+                <RadioMenuFlyoutItem x:Name="CatAuto" Text="自动分类" GroupName="SortPageCategory"
+                                     CommandParameter="Auto" Click="SetCategory_Click" />
+                <MenuFlyoutSeparator />
+                <RadioMenuFlyoutItem x:Name="CatMoe" Text="萌作" GroupName="SortPageCategory"
+                                     CommandParameter="Moe" Click="SetCategory_Click" />
+                <RadioMenuFlyoutItem x:Name="CatStory" Text="剧情作" GroupName="SortPageCategory"
+                                     CommandParameter="Story" Click="SetCategory_Click" />
+                <RadioMenuFlyoutItem x:Name="CatNukige" Text="拔作" GroupName="SortPageCategory"
+                                     CommandParameter="Nukige" Click="SetCategory_Click" />
+                <RadioMenuFlyoutItem x:Name="CatOther" Text="其他" GroupName="SortPageCategory"
+                                     CommandParameter="Other" Click="SetCategory_Click" />
+            </MenuFlyoutSubItem>
             <MenuFlyoutItem Icon="Edit" Text="编辑游戏信息" Click="EditGame_Click" />
             <MenuFlyoutItem Icon="Download" Text="下载游戏信息" Click="FetchInfo_Click" />
             <MenuFlyoutItem Icon="OpenLocal" Text="在文件管理器中打开" x:Name="OpenInExplorerItem" Click="OpenInExplorer_Click" />
@@ -135,6 +149,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- 区间按钮组：<10h 短篇小品 / 10-20h 单线 / 20-40h 中等 / >40h 长篇 -->
@@ -165,7 +180,7 @@
                 <TextBlock x:Name="UnknownTimeText" Style="{ThemeResource BodyTextStyle}" />
             </StackPanel>
 
-            <!-- 内容分类按钮组：单独一行（与时长区间上下排列对齐左侧），与时长区间、状态筛选 AND 联动 -->
+            <!-- 内容轴分类按钮组：萌作/剧情作/拔作/其他（v2 双轴体系，同人作退役，同人游戏按内容/形态重新归类） -->
             <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="4"
                         Margin="0,6,0,0" VerticalAlignment="Center">
                 <RadioButton x:Name="CategoryAll" Content="全部" GroupName="GameCategory" Tag="All"
@@ -176,10 +191,19 @@
                              Checked="Category_Click" />
                 <RadioButton x:Name="CategoryNukige" Content="拔作" GroupName="GameCategory" Tag="Nukige"
                              Checked="Category_Click" />
-                <RadioButton x:Name="CategoryDoujin" Content="同人作" GroupName="GameCategory" Tag="Doujin"
-                             Checked="Category_Click" />
                 <RadioButton x:Name="CategoryOther" Content="其他" GroupName="GameCategory" Tag="Other"
                              Checked="Category_Click" />
+            </StackPanel>
+
+            <!-- 形态轴分类按钮组：传统ADV / 非传统ADV（SLG/RPG 等玩法形态） -->
+            <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="4"
+                        Margin="0,6,0,0" VerticalAlignment="Center">
+                <RadioButton x:Name="FormAll" Content="形态：全部" GroupName="GameForm" Tag="All"
+                             Checked="Form_Click" />
+                <RadioButton x:Name="FormTraditional" Content="传统ADV" GroupName="GameForm" Tag="TraditionalAdv"
+                             Checked="Form_Click" />
+                <RadioButton x:Name="FormNonTraditional" Content="非传统ADV" GroupName="GameForm" Tag="NonTraditionalAdv"
+                             Checked="Form_Click" />
             </StackPanel>
         </Grid>
 
