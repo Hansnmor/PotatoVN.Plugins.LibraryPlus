@@ -292,7 +292,15 @@ LibraryPlus（现有工程）
 8. **批量进行中页面导航**：async void 不取消（后台继续），但页面销毁后控件访问抛 COMException（finally 逃逸会中断批量）——全局批量状态（Plugin.IsBatchScraping/BatchStatus/BatchStatusChanged）+ 页面重建恢复 + 控件访问全防御 + 完成 TriggerPhrased 全页刷新。
 9. **Bangumi API 匿名受限**：部分条目匿名 404（需登录）——用宿主 BgmAccount token（反射读设置 bangumiAccount）鉴权。
 
-**已知边界（手动覆盖兜底）**：幸福的二人房（kungal/Bangumi 均无拔作信号）、茂伸奇谈 HE（投票偏剧 vs 用户认知萌）、兰斯（sexual tag 全站最密）、萌拔（公园恶作剧模拟器/后宫双子洛丽塔——有 kungal「拔作」tag）。
+**形态轴最终版（M3 定稿后补充）**：手动覆盖 > Galgame.Tags 玩法词计分（强词×2/泛词×1/ADV声明-1.5，总分>0 判非传统）> kungal 类型词（结构化可信）> kungal 非 ADV 引擎 > 默认传统ADV。数据源以 Galgame.Tags 为主（kungal 覆盖不全，大量同人黄油无条目）。
+
+**M3 追加踩坑（形态轴与勾选）**：
+10. **ADV 声明不能一票否决**：Bangumi 用户给同人 RPG 黄油也乱标 ADV/AVG（与乱标 SLG 对称）——用计分对冲（多玩法词压倒 ADV、孤泛词被 ADV 抵消）。实测 Summer 乡间性活（真 SLG）与夜羊社（假 SLG）Galgame.Tags 结构完全相同——数据极限，靠手动。
+11. **形态元素词是点缀**：音游（交响乐之雨 95% 文字）/卡牌（Fate/HA）/策略（Muv-Luv）/竞速（野良2 小游戏）不判非传统——只认主体玩法词（SLG/RPG/战棋/塔防/模拟等）。
+12. **多选勾选跨分类保留**：GridView 视图重建会清空 SelectedItems——独立 `_batchSelection`（HashSet<Guid>）增量同步（AddedItems/RemovedItems，全量重建会丢其他分类勾选）；恢复期间 `_restoringSelection` 屏蔽 SelectionChanged（必须在 `_source.Refresh()` 前设置——视图重建清空事件会先于恢复触发）。
+13. **手动覆盖字典赋值必须新建实例**（UserForm/UserCategory 同 KungalData 坑——SetProperty 引用判等不持久化）。
+
+**已知边界（手动覆盖兜底）**：幸福的二人房（kungal/Bangumi 均无拔作信号）、茂伸奇谈 HE（投票偏剧 vs 用户认知萌）、兰斯（sexual tag 全站最密）、萌拔（公园恶作剧模拟器/后宫双子洛丽塔——有 kungal「拔作」tag）、Summer 乡间性活/只属于我的神秘规则（Galgame.Tags 无法区分真伪 SLG/无数据）。
 
 ### 9.4 遗留/后续
 

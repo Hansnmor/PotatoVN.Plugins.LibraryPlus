@@ -55,6 +55,12 @@ public partial class PluginData : ObservableRecipient
     [ObservableProperty] private Dictionary<string, string> _userCategory = new();
 
     /// <summary>
+    /// 用户手动形态覆盖：gameUuid → 形态分类名（TraditionalAdv/NonTraditionalAdv）。
+    /// 优先级高于自动形态判定——数据极限案例（Summer 乡间性活等 Galgame.Tags 无法区分真伪 SLG）靠手动兜底。
+    /// </summary>
+    [ObservableProperty] private Dictionary<string, string> _userForm = new();
+
+    /// <summary>
     /// Bangumi tag 投票数据：gameUuid → tag+count 列表（批量搜刮时采集，需宿主已登录 Bangumi）。
     /// 供分类器作社区投票信号（补充 kungal 盲区，如 kungal 无「拔作」tag 的游戏）。
     /// </summary>

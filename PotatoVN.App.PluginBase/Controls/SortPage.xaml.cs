@@ -31,6 +31,14 @@ public sealed partial class SortPage : Page
     private readonly AdvancedCollectionView _source;
     private Galgame? _currentGame;
 
+    /// <summary>多选勾选集（独立于 GridView.SelectedItems 维护——视图重建/筛选刷新会清空 SelectedItems，
+    /// 勾选意图存这里跨筛选保留，刷新后从它恢复可见项的选中）</summary>
+    private readonly HashSet<Guid> _batchSelection = new();
+
+    /// <summary>恢复勾选进行中：屏蔽 SelectionChanged 同步（SelectedItems.Clear/Add 会触发事件，
+    /// 若不同步屏蔽会把 _batchSelection 自己清掉——勾选丢失的根源）</summary>
+    private bool _restoringSelection;
+
     public SortPage()
     {
         XamlResourceLocatorFactory.PluginControlInit(ref _contentLoaded, this);
@@ -289,13 +297,39 @@ public sealed partial class SortPage : Page
         IncludeWantToPlay.IsChecked = showTicks && included.Contains("WantToPlay");
     }
 
-    /// <summary>统一刷新过滤：状态筛选（包含式）+ 时长区间，两个条件为 AND 关系</summary>
+    /// <summary>统一刷新过滤：状态筛选（包含式）+ 时长区间，两个条件为 AND 关系。
+    /// 视图重建会清空 GridView.SelectedItems——勾选意图在 _batchSelection（SelectionChanged 同步），
+    /// 刷新后从它恢复可见项的选中（被筛选掉的切回后自然恢复）。</summary>
     private void RefreshFilter()
     {
+        // 关键：屏蔽标志必须在 _source.Refresh() 之前设置——视图重建会清空 SelectedItems 并触发
+        // SelectionChanged，若屏蔽未生效，_batchSelection 会被自己的事件清掉（勾选丢失的根源）
+        bool restore = GameGridView.SelectionMode == ListViewSelectionMode.Multiple &&
+                       _batchSelection.Count > 0;
+        if (restore) _restoringSelection = true;
+
         _source.Filter = FilterGame;
         _source.Refresh();
         UpdateCountText();
         UpdateStatsText();
+
+        if (restore)
+        {
+            try
+            {
+                GameGridView.SelectedItems.Clear();
+                foreach (Galgame item in _source.OfType<Galgame>().Where(g => _batchSelection.Contains(g.Uuid)))
+                    GameGridView.SelectedItems.Add(item);
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                // 框架 bug：本次恢复失败，下次刷新再从 _batchSelection 重试（意图不丢）
+            }
+            finally
+            {
+                _restoringSelection = false;
+            }
+        }
     }
 
     private bool FilterGame(object? obj)
@@ -472,6 +506,44 @@ public sealed partial class SortPage : Page
 
     #endregion
 
+    /// <summary>功能简介对话框</summary>
+    private async void Help_Click(object sender, RoutedEventArgs e)
+    {
+        const string help = @"【kungal 数据源】
+· 原生源选择器可选 Kungal，单游戏可手动搜刮中文简介与标签
+
+【批量搜刮】
+· 「更多搜刮」：对筛选或勾选的游戏批量拉取 kungal + Bangumi 数据
+· 简介规则：空或非中文才填充（已有中文简介不覆盖）
+· 标签与现有合并（不删除原有标签）
+
+【双轴分类】
+· 内容轴：萌作 / 剧情作 / 拔作 / 其他（社区投票 + 标签热度 + 基础规则）
+· 形态轴：传统ADV / 非传统ADV（玩法形态判定）
+· 统计条与筛选均为双轴联动，可交叉筛选
+
+【手动覆盖】
+· 右键游戏 → 分类 / 形态，可手动指定（多选勾选时批量应用）
+· 手动设定优先于自动分类，持久化生效
+
+【数据与提示】
+· 搜刮数据本地持久化（随软件数据目录，随插件卸载可清）
+· 建议 kungal 搜刮放在混合搜刮之后（混合搜刮会覆盖标签）
+· 未搜刮 kungal 的游戏使用基础分类（VNDB/Bangumi 标签规则）";
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+            Title = "游戏库增强 - 功能简介",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 480,
+                Content = new TextBlock { Text = help, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
+            },
+            CloseButtonText = "关闭",
+        };
+        await dialog.ShowAsync();
+    }
+
     #region 批量搜刮（kungal）
 
     /// <summary>
@@ -496,6 +568,22 @@ public sealed partial class SortPage : Page
         }
     }
 
+    /// <summary>
+    /// 多选勾选变化 → 增量同步到独立勾选集（跨筛选保留）。
+    /// 必须增量（不能用 Clear+全量收集）：SelectedItems 只含「当前可见」的选中——
+    /// 在剧情分类下勾选新游戏时全量重建会把萌作分类下勾选（当前不可见）的项丢掉。
+    /// 视图重建（Refresh）导致的批量清空在 _restoringSelection 屏蔽期内，不会误删。
+    /// </summary>
+    private void GameGridView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_restoringSelection) return; // 恢复勾选过程中不同步（防自清）
+        if (GameGridView.SelectionMode != ListViewSelectionMode.Multiple) return;
+        foreach (object item in e.AddedItems)
+            if (item is Galgame g) _batchSelection.Add(g.Uuid);
+        foreach (object item in e.RemovedItems)
+            if (item is Galgame g) _batchSelection.Remove(g.Uuid);
+    }
+
     /// <summary>多选开关：开启后网格进入多选模式（勾选），批量搜刮优先作用于选中游戏</summary>
     private void MultiSelectToggle_Click(object sender, RoutedEventArgs e)
     {
@@ -516,17 +604,18 @@ public sealed partial class SortPage : Page
                 // 框架 bug：忽略
             }
             GameGridView.SelectionMode = ListViewSelectionMode.None;
+            _batchSelection.Clear(); // 关闭多选清空勾选集
         }
         GameGridView.IsMultiSelectCheckBoxEnabled = multi;
     }
 
-    /// <summary>当前批量搜刮的目标游戏集：多选模式有选中 → 用选中集；否则退回当前筛选可见集</summary>
-    private List<Galgame> GetBatchTargets()
+    /// <summary>当前操作目标游戏集：多选模式有勾选 → 用完整勾选集（_batchSelection，跨分类——从完整
+    /// 数据源取，不只当前分类可见的）；否则单游戏（右键的/当前游戏）</summary>
+    private List<Galgame> GetBatchTargets(Galgame? fallback = null)
     {
-        if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple &&
-            GameGridView.SelectedItems.Count > 0)
-            return GameGridView.SelectedItems.OfType<Galgame>().ToList();
-        return _source.OfType<Galgame>().ToList();
+        if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple && _batchSelection.Count > 0)
+            return _source.Source.OfType<Galgame>().Where(g => _batchSelection.Contains(g.Uuid)).ToList();
+        return fallback is { } f ? new List<Galgame> { f } : _source.OfType<Galgame>().ToList();
     }
 
     /// <summary>
@@ -539,6 +628,7 @@ public sealed partial class SortPage : Page
         List<Galgame> games = GetBatchTargets();
         bool isSelected = games.Count > 0 &&
                           GameGridView.SelectionMode == ListViewSelectionMode.Multiple;
+        if (!isSelected) games = _source.OfType<Galgame>().ToList(); // 批量按钮非多选时 = 筛选集
         if (games.Count == 0)
         {
             Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "当前筛选下没有游戏");
@@ -721,19 +811,53 @@ public sealed partial class SortPage : Page
             CatStory.IsChecked = manual == nameof(GalgameCategory.Story);
             CatNukige.IsChecked = manual == nameof(GalgameCategory.Nukige);
             CatOther.IsChecked = manual == nameof(GalgameCategory.Other);
+
+            // 形态子菜单选中态
+            string? manualForm = Plugin.Data.UserForm.GetValueOrDefault(game.Uuid.ToString());
+            FormAuto.IsChecked = string.IsNullOrEmpty(manualForm);
+            FormTrad.IsChecked = manualForm == nameof(GalgameForm.TraditionalAdv);
+            FormNonTrad.IsChecked = manualForm == nameof(GalgameForm.NonTraditionalAdv);
         }
     }
 
-    /// <summary>手动分类：设置/清除该游戏的分类覆盖（Auto=清除），持久化并即时刷新统计与筛选</summary>
+    /// <summary>手动形态：设置/清除形态覆盖（Auto=清除）。
+    /// 多选模式且有勾选 → 应用到全部选中；否则只改右键的游戏。持久化并即时刷新。</summary>
+    private void SetForm_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentGame is not { } game || sender is not RadioMenuFlyoutItem item ||
+            item.CommandParameter is not string key) return;
+
+        var targets = GetBatchTargets(game); // 多选选中集（含右键项）；非多选 = 当前右键游戏
+        Plugin.HostApi.Log(InfoBarSeverity.Informational,
+            $"手动形态: 目标 {targets.Count} 个 [{string.Join(",", targets.Select(g => g.Name.Value).Take(6))}] 勾选集={_batchSelection.Count}");
+        // 新建实例赋值：赋回同一引用时 SetProperty 判等不触发持久化（数据只在内存）
+        var dict = new Dictionary<string, string>(Plugin.Data.UserForm);
+        foreach (Galgame g in targets)
+        {
+            if (key == "Auto") dict.Remove(g.Uuid.ToString());
+            else dict[g.Uuid.ToString()] = key;
+        }
+        Plugin.Data.UserForm = dict; // 新实例 → 触发持久化
+        RefreshFilter(); // 内部会刷新统计与列表
+    }
+
+    /// <summary>手动分类：设置/清除分类覆盖（Auto=清除）。
+    /// 多选模式且有勾选 → 应用到全部选中；否则只改右键的游戏。持久化并即时刷新。</summary>
     private void SetCategory_Click(object sender, RoutedEventArgs e)
     {
         if (_currentGame is not { } game || sender is not RadioMenuFlyoutItem item ||
             item.CommandParameter is not string key) return;
 
-        var dict = Plugin.Data.UserCategory;
-        if (key == "Auto") dict.Remove(game.Uuid.ToString());
-        else dict[game.Uuid.ToString()] = key;
-        Plugin.Data.UserCategory = dict; // 整体替换触发持久化
+        var targets = GetBatchTargets(game); // 多选选中集（含右键项）；非多选 = 当前右键游戏
+        Plugin.HostApi.Log(InfoBarSeverity.Informational,
+            $"手动分类: 目标 {targets.Count} 个 [{string.Join(",", targets.Select(g => g.Name.Value).Take(6))}] 多选模式={GameGridView.SelectionMode == ListViewSelectionMode.Multiple} 勾选集={_batchSelection.Count}");
+        var dict = new Dictionary<string, string>(Plugin.Data.UserCategory);
+        foreach (Galgame g in targets)
+        {
+            if (key == "Auto") dict.Remove(g.Uuid.ToString());
+            else dict[g.Uuid.ToString()] = key;
+        }
+        Plugin.Data.UserCategory = dict; // 新实例 → 触发持久化
         RefreshFilter(); // 内部会刷新统计与列表
     }
 

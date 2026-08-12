@@ -199,19 +199,42 @@ public static class GalgameClassifier
 
     // ==================== 形态轴 ====================
 
-    /// <summary>形态轴分类：类型词 tag / 非 ADV 引擎命中 → 非传统ADV；否则传统ADV</summary>
+    /// <summary>
+    /// 形态轴分类（数据源以 Galgame.Tags 为主——kungal 覆盖不全，大量 SLG/RPG 同人黄油无条目，
+    /// VNDB/Bangumi 标签宿主搜刮时已下载、覆盖全）：
+    /// ① Galgame.Tags：ADV 声明优先（「ADV/视觉小说」= 文字主体，形态词作废——防 Bangumi
+    ///    用户乱标形态词，实测夜羊社文字 ADV 被标「SLG」）；无声明才查形态词 → 非传统ADV
+    /// ② kungal 类型词 tag：同样 ADV 声明优先（补充覆盖）
+    /// ③ kungal 非 ADV 引擎（RPG Maker 等）→ 非传统ADV（补充）
+    /// ④ 默认传统ADV
+    /// </summary>
     public static GalgameForm ClassifyForm(Galgame game)
     {
+        // ① 手动覆盖（与内容轴同款——Summer 乡间性活/只属于我的神秘规则等数据极限案例靠手动兜底）
+        if (Plugin.Data.UserForm.GetValueOrDefault(game.Uuid.ToString()) is { } manualForm &&
+            manualForm != "" && Enum.TryParse<GalgameForm>(manualForm, out GalgameForm manualFormVal))
+            return manualFormVal;
+
+        // ② Galgame.Tags 玩法词计分（VNDB/Bangumi 混合标签——覆盖所有搜刮过的游戏；
+        //    计分制处理两边都不可靠的乱标：多玩法词压倒 ADV，孤泛词被 ADV 抵消）
+        List<string?> tags = game.Tags?.Value.ToList() ?? [];
+        if (HasStrongFormEvidence(tags))
+            return GalgameForm.NonTraditionalAdv;
+
+        // ③ kungal 类型词 tag（社区结构化标注，可信——直接命中即非传统）
         KungalGameData? kungal = Plugin.Data.KungalData.GetValueOrDefault(game.Uuid.ToString());
         if (kungal is { Tags.Count: > 0 })
         {
             foreach (KungalTagData tag in kungal.Tags.Where(t => t.Category == "content"))
             {
                 string t = tag.Name.Trim().ToLowerInvariant();
-                if (FormTypeKeywords.Any(kw => t.Contains(kw, StringComparison.Ordinal)))
+                if (FormStrongKeywords.Any(kw => t.Contains(kw, StringComparison.Ordinal)) ||
+                    FormWeakKeywords.Any(kw => t.Contains(kw, StringComparison.Ordinal)))
                     return GalgameForm.NonTraditionalAdv;
             }
         }
+
+        // ④ kungal 非 ADV 引擎（补充）
         if (kungal is { Engine.Count: > 0 })
         {
             foreach (string engine in kungal.Engine)
@@ -221,8 +244,11 @@ public static class GalgameClassifier
                     return GalgameForm.NonTraditionalAdv;
             }
         }
+
         return GalgameForm.TraditionalAdv;
     }
+
+
 
     // ==================== 显示名 ====================
 
@@ -263,18 +289,52 @@ public static class GalgameClassifier
         "反转", "伏笔", "史诗", "文学", "轮回", "解密", "智斗", "民俗", "克苏鲁", "意识流",
     };
 
-    /// <summary>形态类型词（content tag，包含匹配）：命中 → 非传统ADV</summary>
-    private static readonly string[] FormTypeKeywords =
+    /// <summary>
+    /// 形态强玩法词（权重 2）：明确"非文字主体"的玩法（RPG Maker/HRPG 等复合词、战棋/塔防等）。
+    /// 同人 RPG 黄油（阿尔米奥西翁/色鬼）靠这些词压倒 Bangumi 乱标的 ADV 声明。
+    /// </summary>
+    private static readonly string[] FormStrongKeywords =
     {
-        "slg", "rpg", "模拟", "策略", "act", "动作", "射击", "弹幕", "stg", "音游",
-        "益智", "解谜", "拼图", "tcg", "卡牌", "经营", "养成", "塔防", "战棋", "srpg",
-        "arpg", "竞速", "体育", "格斗", "沙盒", "开放世界", "roguelike", "rouge", "地牢", "迷宫",
+        "rpg maker", "rpgmaker", "hrpg", "jrpg", "srpg", "arpg", "战棋", "塔防",
+        "roguelike", "rouge", "模拟经营", "开放世界", "沙盒",
     };
 
-    /// <summary>非 ADV 引擎词（包含匹配）：只放明确非视觉小说形态的引擎（Ren'Py 是 ADV 引擎不放）</summary>
+    /// <summary>形态泛玩法词（权重 1）：单独出现可能被 Bangumi 乱标（夜羊社被标 SLG）——需与 ADV 声明计分对冲</summary>
+    private static readonly string[] FormWeakKeywords =
+    {
+        "slg", "rpg", "act", "stg", "模拟", "射击", "弹幕", "格斗",
+    };
+
+    /// <summary>ADV 声明词（权重 -1.5）：文字主体声明。注意 Bangumi 用户给同人黄油也乱标 ADV/AVG——只能对冲不能一票否决</summary>
+    private static readonly string[] FormAdvKeywords =
+    {
+        "adv", "avg", "vn", "visual novel", "视觉小说", "文字游戏", "纯文字",
+    };
+
+    /// <summary>
+    /// Galgame.Tags（VNDB/Bangumi 混合标签）玩法词计分：
+    /// 强词×2 + 泛词×1 - ADV声明×1.5；总分 &gt; 0 → 非传统ADV。
+    /// 计分而非一票否决：Bangumi 用户标签的形态词与 ADV 声明都不可靠（实测乱标成对出现），
+    /// 多玩法词（阿尔米/色鬼）可压倒 ADV，孤泛词（夜羊社 SLG）被 ADV 抵消。
+    /// </summary>
+    private static bool HasStrongFormEvidence(List<string?> tags)
+    {
+        double score = 0;
+        foreach (string? tag in tags)
+        {
+            if (string.IsNullOrWhiteSpace(tag)) continue;
+            string t = tag.Trim().ToLowerInvariant();
+            if (FormStrongKeywords.Any(kw => t.Contains(kw, StringComparison.Ordinal))) score += 2;
+            else if (FormWeakKeywords.Any(kw => t.Contains(kw, StringComparison.Ordinal))) score += 1;
+            else if (FormAdvKeywords.Any(kw => t.Contains(kw, StringComparison.Ordinal))) score -= 1.5;
+        }
+        return score > 0;
+    }
+
+    /// <summary>非 ADV 引擎词（包含匹配）：只放明确非视觉小说形态的引擎（Ren'Py/GameMaker 可做 ADV 不放）</summary>
     private static readonly string[] FormEngineKeywords =
     {
-        "rpg maker", "rpgツクール", "srpg studio", "wolf rpg", "gamemaker",
+        "rpg maker", "rpgツクール", "srpg studio", "wolf rpg",
     };
 
     // ==================== 旧规则 fallback（v4.7 关键词规则原样保留） ====================
