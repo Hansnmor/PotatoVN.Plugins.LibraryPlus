@@ -12,6 +12,7 @@ using GalgameManager.WinApp.Base.Contracts.NavigationApi.NavigateParameters;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using PotatoVN.App.PluginBase.Helper;
+using PotatoVN.App.PluginBase.Helper.Kungal;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase.Controls;
@@ -424,10 +425,154 @@ public sealed partial class SortPage : Page
 
     #endregion
 
+    #region 批量搜刮（kungal）
+
+    /// <summary>多选开关：开启后网格进入多选模式（勾选），批量搜刮优先作用于选中游戏</summary>
+    private void MultiSelectToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool multi = MultiSelectToggle.IsChecked == true;
+        if (multi)
+        {
+            GameGridView.SelectionMode = ListViewSelectionMode.Multiple;
+        }
+        else
+        {
+            // 必须先 Clear 再切 None：None 模式下 SelectedItems 是无效集合，Clear 会抛 E_UNEXPECTED（框架 bug）
+            try
+            {
+                GameGridView.SelectedItems.Clear();
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                // 框架 bug：忽略
+            }
+            GameGridView.SelectionMode = ListViewSelectionMode.None;
+        }
+        GameGridView.IsMultiSelectCheckBoxEnabled = multi;
+    }
+
+    /// <summary>当前批量搜刮的目标游戏集：多选模式有选中 → 用选中集；否则退回当前筛选可见集</summary>
+    private List<Galgame> GetBatchTargets()
+    {
+        if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple &&
+            GameGridView.SelectedItems.Count > 0)
+            return GameGridView.SelectedItems.OfType<Galgame>().ToList();
+        return _source.OfType<Galgame>().ToList();
+    }
+
+    /// <summary>
+    /// 批量搜刮：对当前筛选可见的游戏全部用 kungal 搜刮。
+    /// 简介规则：空或非中文才填，已有中文简介不动；标签：原 tags ∪ kungal tags（去重）。
+    /// 同时把 kungal 完整数据（tag 全量 + 类型投票）存入 PluginData，供 M3 投票分类使用。
+    /// </summary>
+    private async void BatchScrape_Click(object sender, RoutedEventArgs e)
+    {
+        List<Galgame> games = GetBatchTargets();
+        bool isSelected = games.Count > 0 &&
+                          GameGridView.SelectionMode == ListViewSelectionMode.Multiple;
+        if (games.Count == 0)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "当前筛选下没有游戏");
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+            Title = "批量搜刮（kungal）",
+            Content = $"将对{(isSelected ? "选中的" : "当前筛选的")} {games.Count} 款游戏用 kungal 搜刮：\n" +
+                      "· 简介：仅填充为空或非中文的（已有中文简介不覆盖）\n" +
+                      "· 标签：与现有标签合并（不删除原有标签）\n" +
+                      $"预计耗时约 {games.Count * 3 / 10 + 1} 秒（含网络请求节流）",
+            PrimaryButtonText = "开始搜刮",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        // 防重入：批量进行中禁用按钮，finally 恢复
+        if (sender is AppBarButton scrapeButton) scrapeButton.IsEnabled = false;
+
+        int ok = 0, noMatch = 0, fail = 0, locked = 0;
+        try
+        {
+            for (int i = 0; i < games.Count; i++)
+            {
+                Galgame game = games[i];
+                BatchProgressText.Text = $"搜刮中 {i + 1}/{games.Count}：{game.Name.Value}";
+                try
+                {
+                    var fetched = await Plugin.StaticPhraser.FetchDetailAsync(game);
+                    if (fetched == null)
+                    {
+                        noMatch++;
+                        continue;
+                    }
+                    Galgame result = Plugin.StaticPhraser.BuildResult(game, fetched.Value.Detail);
+                    if (ApplyBatchResult(game, result)) locked++;
+
+                    // 采集完整 kungal 数据到 PluginData（整体替换赋值触发持久化）
+                    var dict = Plugin.Data.KungalData;
+                    dict[game.Uuid.ToString()] = KungalPhraser.BuildKungalData(fetched.Value.Detail);
+                    Plugin.Data.KungalData = dict;
+
+                    await HostServices.SaveGameAsync(game);
+                    ok++;
+                }
+                catch (Exception ex)
+                {
+                    fail++;
+                    Plugin.HostApi.Log(InfoBarSeverity.Warning,
+                        $"批量搜刮失败: {game.Name.Value} ({ex.Message})");
+                }
+            }
+        }
+        finally
+        {
+            BatchProgressText.Text = "";
+            if (sender is AppBarButton restoreButton) restoreButton.IsEnabled = true;
+            OnHostPhrased(); // 重新拉数据并刷新列表/统计
+        }
+
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: $"批量搜刮完成：成功 {ok} / 简介锁定未动 {locked} / 未匹配 {noMatch} / 失败 {fail}");
+    }
+
+    /// <summary>把搜刮结果应用到游戏对象（批量不走宿主 ParseAsync，自行实现合并）</summary>
+    /// <returns>简介是否因锁定跳过（供汇总统计）</returns>
+    private static bool ApplyBatchResult(Galgame game, Galgame result)
+    {
+        bool descriptionLocked = false;
+        // 简介：空或非中文才填（已有中文简介不动）；IsLock 由 LockableProperty setter 自行拦截
+        if (!KungalPhraser.IsChinese(game.Description.Value) &&
+            !string.IsNullOrWhiteSpace(result.Description.Value))
+        {
+            if (game.Description.IsLock)
+                descriptionLocked = true; // 用户锁了简介，搜刮不覆盖（锁的语义）
+            else
+                game.Description.Value = result.Description.Value;
+        }
+
+        // 标签：整体替换为 result.Tags（= 原 ∪ kungal），用增量修改防绑定异常（宿主 SyncCollection 同款语义）；
+        // 尊重 Tags.IsLock（与宿主 ParseAsync 行为对齐：锁了就不动）
+        if (result.Tags.Value is { } newTags && game.Tags.Value is { } current && !game.Tags.IsLock)
+        {
+            foreach (string t in current.Where(t => !newTags.Contains(t)).ToList())
+                current.Remove(t);
+            foreach (string t in newTags.Where(t => !current.Contains(t)).ToList())
+                current.Add(t);
+        }
+
+        return descriptionLocked;
+    }
+
+    #endregion
+
     #region 游戏交互（与原生游戏库页一致）
 
     private void GameGridView_ItemClick(object sender, ItemClickEventArgs e)
     {
+        if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple) return; // 多选模式只勾选，不导航
         if (e.ClickedItem is not Galgame game) return;
         // 详情页隶属于「游戏」页面：先把侧边栏选中指示器移动到游戏项，
         // 导航完成后清除选中（详情页不显示蓝条，对齐原生行为，保证每次一致）。

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -36,4 +37,44 @@ public partial class PluginData : ObservableRecipient
 
     /// <summary>内容分类筛选键（All=全部/Moe/Story/Nukige/Doujin/Other，默认全部）</summary>
     [ObservableProperty] private string _categoryKey = "All";
+
+    /// <summary>
+    /// kungal 搜刮数据缓存：gameUuid → 数据（gid、tag 全量含热度/剧透分级、类型投票）。
+    /// 注意：字典整体替换赋值才会触发持久化（集合内修改不触发 PropertyChanged）。
+    /// </summary>
+    [ObservableProperty] private Dictionary<string, KungalGameData> _kungalData = new();
+}
+
+/// <summary>某款游戏的 kungal 数据（批量搜刮时从详情采集，供 M3 投票分类使用）</summary>
+public class KungalGameData
+{
+    public int Gid { get; set; }
+
+    public string? VndbId { get; set; }
+
+    /// <summary>全量 tag（含 category/galgame_count/spoiler_level，不过滤）</summary>
+    public List<KungalTagData> Tags { get; set; } = new();
+
+    /// <summary>用户类型投票：galgame_type 名（moe/plot/ba_saku/daily…）→ 票数</summary>
+    public Dictionary<string, int> TypeVotes { get; set; } = new();
+
+    public int RatingCount { get; set; }
+
+    public double? AvgRating { get; set; }
+
+    public DateTime FetchedAt { get; set; }
+}
+
+/// <summary>kungal tag（保持站点原始结构）</summary>
+public class KungalTagData
+{
+    public string Name { get; set; } = "";
+
+    /// <summary>content（题材）/ meta（系统机制）</summary>
+    public string Category { get; set; } = "";
+
+    /// <summary>全站热度（挂该标签的游戏数），用于分类权重</summary>
+    public int GalgameCount { get; set; }
+
+    public int SpoilerLevel { get; set; }
 }

@@ -244,3 +244,32 @@ LibraryPlus（现有工程）
 - 增量构建偶发 XAML 报错 → `rm -rf bin obj` 全量重建（§4.5）
 - 宿主日志 `LocalState\Logs\log{yyyyMMdd}.txt`，排查按时间戳取最新
 - 新功能优先走官方 API + 页面内数据，宿主内部能力没接口就诚实标注（§9）
+
+---
+
+## 9. 实施记录（M0-M2 已交付，2026-08-12）
+
+### 9.1 已完成功能
+
+| 里程碑 | 交付 |
+|---|---|
+| M0 | 匹配正确率抽样 50 样本：vndb_id 首位命中 98%、中文名搜索 100% 含命中；ratings 投票信号确认；`game_type` 参数确认不可用为信号源 |
+| M1 | `IParserProvider` 接入（原生源选择器出现 Kungal）；三层匹配（gid 记忆→vndb_id→名称+Dice 校验）；字段控制（无条件覆盖字段回传原值）；tag 合并（原∪kungal）；防清空保护 |
+| M2 | 扩展库页「更多搜刮」批量（范围=筛选集或多选集）；多选模式；PluginData 存储 kungal 完整数据（tag 全量+类型投票）；简介规则（空/非中文才填）；节流 200ms；锁尊重（简介+标签） |
+
+### 9.2 新增踩坑记录（蓝图 §3/§4 之外，实施中发现）
+
+1. **PotatoVN 存 VNDB ID 不带 `v` 前缀**（`VndbPhraser.cs:218` 的 `id[1..]`），kungal 搜索索引带 `v`——搜无前缀 ID 必 0 结果。**修复**：vndb_id 路径做格式变体尝试（原格式+补/去 v），且拉候选详情校验 `vndb_id` 归一化一致才接受（顺带堵住 2% 错误命中）。
+2. **宿主 `SyncCollection` 是替换语义不是并集**（数学验证：结果=other）。**影响**：混合搜刮会把 kungal tag 整个顶掉（宿主单源优先+替换，插件无解，接受+工作流引导：kungal 搜刮做收尾）；kungal 搜刮自身必须先在 phraser 内合并原 tags 再返回。
+3. **`IsChinese` 误判日文为中文**：日文含汉字（CJK 区间）。**修复**：假名检测（平假名/片假名→日文），排除 `・`(U+30FB) 与 `ー`(U+30FC)。
+4. **插件 XAML `Icon="Symbol名"` 简写会 XamlParseException**（宿主旧 WinUI 枚举可能缺成员，页面创建即崩）——**新图标一律 FontIcon + Segoe Fluent Icons Glyph**（与 §4.2 IsChecked 同类 API 版本红线）。
+5. **`SelectedItems.Clear()` 在 `SelectionMode=None` 下抛 E_UNEXPECTED**（0x8000FFFF）——先 Clear 再切模式，包 try-catch。
+6. **简介含换行**：kungal 简介 HTML 的 `<br>` 转 `\n` 后日志/UI 会拆行，排查"日志截断"假象时注意。
+7. **IsLock 语义**：锁 = 绝对不动（简介赋值被 setter 拦截、tags 需主动检查）——批量与宿主行为已对齐；批量 InfoBar 汇总含「简介锁定未动 X」。
+8. **`Galgames.ToList()` 是引用浅拷贝**：GetAllGames 返回宿主实例引用，插件改对象+`SaveGalgameAsync`（Upsert）即持久化——批量修改直接生效，无需宿主流程。
+
+### 9.3 遗留/后续
+
+- 混合搜刮清 kungal tag：接受（工作流引导），如需强改需 harmony（打包黑名单排除 0Harmony，ALC 加载有障碍，暂不破例）
+- 简介规则开关（kungal 优先 vs 保护已有中文）：当前默认保护，可后续加设置
+- 批量完成后的 UI 刷新走 `OnHostPhrased`（重新 GetAllGames）

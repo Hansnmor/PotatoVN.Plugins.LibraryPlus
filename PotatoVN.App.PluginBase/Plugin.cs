@@ -1,14 +1,16 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using GalgameManager.Contracts.Phrase;
 using GalgameManager.WinApp.Base.Contracts;
 using GalgameManager.WinApp.Base.Models;
 using PotatoVN.App.PluginBase.Helper;
+using PotatoVN.App.PluginBase.Helper.Kungal;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase
 {
-    public partial class Plugin : IPlugin
+    public partial class Plugin : IPlugin, IParserProvider
     {
         public static IPotatoVnApi HostApi { get; private set; } = null!;
 
@@ -25,6 +27,17 @@ namespace PotatoVN.App.PluginBase
 
         private PluginData _data = new();
         private IPotatoVnApi _hostApi = null!;
+
+        /// <summary>kungal 搜刮器静态实例（SortPage 等无插件实例上下文的位置使用；与宿主注册的是同一实例）</summary>
+        internal static KungalPhraser StaticPhraser { get; } = new();
+
+        /// <summary>kungal 搜刮器实例（插件页「更多搜刮」直接复用，配置改此实例）</summary>
+        public KungalPhraser KungalPhraser => StaticPhraser;
+
+        // ===== IParserProvider：向宿主注册 kungal 数据源 =====
+        public IGalInfoPhraser GetPhraser() => StaticPhraser;
+
+        public string ParserName => "Kungal";
 
         public PluginInfo Info { get; } = new()
         {

@@ -104,12 +104,23 @@
                     </Flyout>
                 </AppBarButton.Flyout>
             </AppBarButton>
+            <!-- 注意：Icon 不用 Symbol 简写（宿主旧 WinUI 的 Symbol 枚举可能缺成员，曾导致 XamlParseException），统一 FontIcon -->
+            <AppBarToggleButton x:Name="MultiSelectToggle" Label="多选"
+                                Click="MultiSelectToggle_Click"
+                                ToolTipService.ToolTip="开启后勾选游戏，批量搜刮将只作用于选中的游戏">
+                <AppBarToggleButton.Icon>
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE762;" />
+                </AppBarToggleButton.Icon>
+            </AppBarToggleButton>
+            <AppBarButton Icon="Download" Label="更多搜刮" Click="BatchScrape_Click" ToolTipService.ToolTip="对当前筛选的游戏批量用 kungal 搜刮（中文简介 + 标签）" />
             <CommandBar.Content>
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"
                                Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />
                     <TextBlock x:Name="CategoryStatsText" VerticalAlignment="Center"
                                Style="{ThemeResource BodyTextStyle}" />
+                    <TextBlock x:Name="BatchProgressText" VerticalAlignment="Center"
+                               Style="{ThemeResource BodyTextStyle}" Margin="12,0,0,0" />
                 </StackPanel>
             </CommandBar.Content>
         </CommandBar>
