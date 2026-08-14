@@ -63,6 +63,10 @@ internal class KungalClient
     public Task<KungalDetail?> GetDetailAsync(int gid)
         => GetAsync<KungalDetail>($"/galgame/{gid}");
 
+    /// <summary>按角色 id 拉取角色详情（intros 多语言简介，zh-Hans 为自动翻译）</summary>
+    public Task<KungalCharacter?> GetCharacterAsync(int charId)
+        => GetAsync<KungalCharacter>($"/galgame-character/{charId}");
+
     /// <summary>HTML 简介转纯文本（AngleSharp）</summary>
     public static string HtmlToText(string html)
     {

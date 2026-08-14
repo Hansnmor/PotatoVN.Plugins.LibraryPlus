@@ -34,6 +34,9 @@ internal class BgmClient
     /// <summary>批量采集节流（Bangumi 匿名限 60/min，登录后宽松，保守 1s）</summary>
     public TimeSpan RequestDelay { get; set; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>角色页抓取节流（网页服务比 API 宽松，保守 0.5s）</summary>
+    public TimeSpan PageRequestDelay { get; set; } = TimeSpan.FromMilliseconds(500);
+
     private static readonly HttpClient Client = new();
 
     /// <summary>拉取条目的 tag 投票列表；失败/未登录返回 null</summary>
@@ -51,6 +54,32 @@ internal class BgmClient
             var json = await response.Content.ReadAsStringAsync();
             var subject = JsonSerializer.Deserialize<BgmSubjectResponse>(json);
             return subject?.Tags;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 抓 bgm 角色页解析「简体中文名」标签。
+    /// 注意：v0 API 的 characters 接口没有 name_cn 字段（实测 v1/v2 版本头都没有），
+    /// 简体中文名只存在于页面 HTML（&lt;span class="tip"&gt;简体中文名: &lt;/span&gt;XXX）。匿名可访问。
+    /// </summary>
+    public async Task<string?> GetCharacterCnNameAsync(int characterId)
+    {
+        if (PageRequestDelay > TimeSpan.Zero) await Task.Delay(PageRequestDelay);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://bgm.tv/character/{characterId}");
+            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            using var response = await Client.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return null;
+            var html = await response.Content.ReadAsStringAsync();
+            var match = System.Text.RegularExpressions.Regex.Match(html,
+                "<span class=\"tip\">简体中文名: </span>([^<]+)");
+            if (!match.Success) return null;
+            return System.Net.WebUtility.HtmlDecode(match.Groups[1].Value.Trim());
         }
         catch
         {

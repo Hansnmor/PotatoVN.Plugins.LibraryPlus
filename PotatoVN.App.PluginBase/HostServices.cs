@@ -185,6 +185,48 @@ internal static class HostServices
         }
     }
 
+    /// <summary>
+    /// 下载角色图片（反射宿主 GalgameManager.Helpers.DownloadHelper.DownloadAndSaveImageWithDiffThread，
+    /// 保存到宿主数据目录 images 文件夹）。补齐角色的 PreviewImageUrl/ImageUrl 是内存字段
+    /// （[JsonIgnore] 不持久化），下载成功后将本地路径写入 PreviewImagePath/ImagePath 随游戏保存。
+    /// 失败保持默认图，静默（不影响批量）。
+    /// </summary>
+    public static async Task DownloadCharacterImagesAsync(GalgameCharacter character)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(character.PreviewImageUrl) &&
+                string.IsNullOrWhiteSpace(character.ImageUrl))
+                return;
+            Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+            Type? helper = host?.GetType("GalgameManager.Helpers.DownloadHelper");
+            MethodInfo? m = helper?.GetMethod("DownloadAndSaveImageWithDiffThread",
+                BindingFlags.Public | BindingFlags.Static);
+            if (m is null) return;
+            // 反射 Invoke 必须传全部参数（默认值不自动应用）：
+            // (imageUrl, retry=0, fileNameWithoutExtension, onException=null, client=null, targetFolder=null)
+            if (!string.IsNullOrWhiteSpace(character.PreviewImageUrl))
+            {
+                var previewTask = (Task<string?>)m.Invoke(null, new object?[]
+                    { character.PreviewImageUrl, 0, $"{character.Name}_Preview", null, null, null })!;
+                if (await previewTask is { } preview)
+                    character.PreviewImagePath = preview;
+            }
+            if (!string.IsNullOrWhiteSpace(character.ImageUrl))
+            {
+                var imageTask = (Task<string?>)m.Invoke(null, new object?[]
+                    { character.ImageUrl, 0, $"{character.Name}_Large", null, null, null })!;
+                if (await imageTask is { } image)
+                    character.ImagePath = image;
+            }
+        }
+        catch
+        {
+            // 图片下载失败保持默认图，不影响批量
+        }
+    }
+
     private static Type ServiceType() => Service.GetType();
 
     /// <summary>当前已订阅宿主 PhrasedEvent 的处理器（单一，页面重建会覆盖）</summary>

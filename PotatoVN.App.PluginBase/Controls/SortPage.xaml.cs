@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.WinUI.Collections;
 using GalgameManager.Enums;
@@ -465,8 +466,9 @@ public sealed partial class SortPage : Page
     }
 
     /// <summary>
-    /// 更新统计条（跟随当前可见列表）：待玩总时长 / 完成度（基于全库） / 时长未知数。
-    /// 完成度基于全库——排除已玩过后可见列表已玩数为 0，用全库才有意义。
+    /// 更新统计条（跟随当前可见列表）：待玩总时长 / 完成度 / 时长未知数。
+    /// 完成度动态化：左侧三个筛选（时长/内容分类/形态）全部为「全部」→ 全局完成度（已玩/全库）；
+    /// 任一筛选非「全部」→ 该筛选条件下的完成度（已玩/当前分类子集，与状态筛选无关）。
     /// 双轴分类统计：内容轴（萌/剧情/拔/其他）+ 形态轴（传统ADV/非传统ADV）。
     /// </summary>
     private void UpdateStatsText()
@@ -488,8 +490,18 @@ public sealed partial class SortPage : Page
         }
         TotalTimeText.Text = $"待玩总时长：{ExpectedPlayTimeHelper.FormatHours(totalMinutes)}";
 
-        int played = _source.Source.OfType<Galgame>().Count(g => g.PlayType == PlayType.Played);
-        ProgressText.Text = $"完成度：{played}/{_source.Source.Count}";
+        // 完成度：左侧三个筛选全「全部」→ 全局；否则按三筛选条件（时长/内容/形态，不含状态筛选）的子集统计
+        bool isGlobal = Plugin.Data.RangeKey == RangeKeyAll &&
+                        Plugin.Data.CategoryKey == CategoryKeyAll &&
+                        Plugin.Data.FormKey == CategoryKeyAll;
+        IEnumerable<Galgame> progressSet = _source.Source.OfType<Galgame>();
+        if (!isGlobal)
+            progressSet = progressSet.Where(g => MatchesRange(g) && MatchesCategory(g) && MatchesForm(g));
+        int played = progressSet.Count(g => g.PlayType == PlayType.Played);
+        int total = progressSet.Count();
+        ProgressText.Text = isGlobal
+            ? $"完成度：{played}/{total}"
+            : $"完成度：{played}/{total}（当前分类）";
 
         UnknownTimeText.Text = $"{unknown} 款时长未知";
 
@@ -510,17 +522,21 @@ public sealed partial class SortPage : Page
     private async void Help_Click(object sender, RoutedEventArgs e)
     {
         const string help = @"【kungal 数据源】
-· 原生源选择器可选 Kungal，单游戏可手动搜刮中文简介与标签
+· 原生源选择器可选 Kungal；设置页选 Kungal 后可用「游戏ID」按 gid 更新
+· 搜刮内容：中文简介、标签、角色中文简介、日文角色名换简体中文名、角色图片
 
 【批量搜刮】
 · 「更多搜刮」：对筛选或勾选的游戏批量拉取 kungal + Bangumi 数据
 · 简介规则：空或非中文才填充（已有中文简介不覆盖）
 · 标签与现有合并（不删除原有标签）
+· 角色：简介空/非中文才填；勾选「补充角色」可补齐缺失角色（含图片）
+· 剧透角色自动跳过；完成后报告重复角色（需手动清理）
 
 【双轴分类】
 · 内容轴：萌作 / 剧情作 / 拔作 / 其他（社区投票 + 标签热度 + 基础规则）
 · 形态轴：传统ADV / 非传统ADV（玩法形态判定）
 · 统计条与筛选均为双轴联动，可交叉筛选
+· 完成度跟随分类筛选动态统计（时长/内容/形态全「全部」时显示全局）
 
 【手动覆盖】
 · 右键游戏 → 分类 / 形态，可手动指定（多选勾选时批量应用）
@@ -639,15 +655,36 @@ public sealed partial class SortPage : Page
         {
             XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
             Title = "批量搜刮（kungal）",
-            Content = $"将对{(isSelected ? "选中的" : "当前筛选的")} {games.Count} 款游戏用 kungal 搜刮：\n" +
-                      "· 简介：仅填充为空或非中文的（已有中文简介不覆盖）\n" +
-                      "· 标签：与现有标签合并（不删除原有标签）\n" +
-                      $"预计耗时约 {games.Count * 3 / 10 + 1} 秒（含网络请求节流）",
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"将对{(isSelected ? "选中的" : "当前筛选的")} {games.Count} 款游戏用 kungal 搜刮：\n" +
+                               "· 简介：仅填充为空或非中文的（已有中文简介不覆盖）\n" +
+                               "· 角色简介：并发拉取，仅填充为空或非中文的（按 VNDB/Bangumi 角色 id 或名称匹配）\n" +
+                               "· 角色名：日文名角色替换为 Bangumi 简体中文名（有则替换）\n" +
+                               "· 标签：与现有标签合并（不删除原有标签）\n" +
+                               "· 重复检测：完成后报告 bgm/vndb 角色 id 相同的重复角色（不自动删）\n" +
+                               $"预计耗时约 {games.Count * 6 / 60 + 1} 分钟（含网络请求节流）",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new CheckBox
+                    {
+                        Content = "补充 kungal 有而库中没有的角色（含简体中文名与简介）",
+                        IsChecked = false, // 代码设置选中态（插件 XAML 红线不适用代码创建）
+                    },
+                },
+            },
             PrimaryButtonText = "开始搜刮",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        bool addMissing = (dialog.Content as StackPanel)?.Children
+            .OfType<CheckBox>().FirstOrDefault()?.IsChecked == true;
 
         // 防重入：批量进行中禁用按钮，finally 恢复
         if (sender is AppBarButton scrapeButton) scrapeButton.IsEnabled = false;
@@ -664,7 +701,8 @@ public sealed partial class SortPage : Page
         var bgmClient = new BgmClient { Token = await HostServices.GetBgmTokenAsync() };
         int bgmOk = 0;
 
-        int ok = 0, noMatch = 0, fail = 0, locked = 0;
+        int ok = 0, noMatch = 0, fail = 0, locked = 0, charApplied = 0, charRenamedTotal = 0, charAddedTotal = 0, dupTotal = 0;
+        var dupGames = new List<(string GameName, List<(string Name, int Count)> Dups)>();
         try
         {
             for (int i = 0; i < games.Count; i++)
@@ -706,6 +744,39 @@ public sealed partial class SortPage : Page
                     Galgame result = Plugin.StaticPhraser.BuildResult(game, fetched.Value.Detail);
                     if (ApplyBatchResult(game, result)) locked++;
 
+                    // 角色简介 + 简体中文名 + 补齐缺失角色 + 角色图片：
+                    // 并发拉取 kungal 角色详情；简介空/非中文才替换，日文名角色从 bgm 页面换简体中文名；
+                    // 失败不影响主流程（单角色失败已内部跳过）
+                    try
+                    {
+                        var (charApps, charRenamed, charAddedChars, charNeedsImages) =
+                            await Plugin.StaticPhraser.FetchCharacterIntrosAsync(game, fetched.Value.Detail, addMissing);
+                        foreach (var (character, intro) in charApps)
+                        {
+                            character.Summary = intro;
+                            charApplied++;
+                        }
+                        charRenamedTotal += charRenamed;
+                        charAddedTotal += charAddedChars.Count;
+                        // 缺图角色并发下载图片（反射宿主 DownloadHelper 存宿主 images 目录；失败保持默认图）
+                        if (charNeedsImages.Count > 0)
+                        {
+                            using var imgSem = new SemaphoreSlim(4);
+                            var imgTasks = charNeedsImages.Select(async c =>
+                            {
+                                await imgSem.WaitAsync();
+                                try { await HostServices.DownloadCharacterImagesAsync(c); }
+                                finally { imgSem.Release(); }
+                            });
+                            await Task.WhenAll(imgTasks);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Plugin.HostApi.Log(InfoBarSeverity.Warning,
+                            $"角色简介搜刮失败: {game.Name.Value} ({ex.Message})");
+                    }
+
                     // 采集完整 kungal 数据到 PluginData（新建实例赋值，保证触发持久化）
                     var dict = new Dictionary<string, KungalGameData>(Plugin.Data.KungalData)
                     {
@@ -715,6 +786,17 @@ public sealed partial class SortPage : Page
 
                     await HostServices.SaveGameAsync(game);
                     ok++;
+
+                    // 重复角色检测（只报告不删除：bgm/vndb 角色 id 相同 = 确定重复，由用户处置）
+                    var dups = KungalPhraser.DetectDuplicateCharacters(game);
+                    if (dups.Count > 0)
+                    {
+                        dupTotal += dups.Sum(d => d.Count - 1);
+                        dupGames.Add((game.Name.Value, dups));
+                        Plugin.HostApi.Log(InfoBarSeverity.Warning,
+                            $"检测到重复角色: {game.Name.Value} " +
+                            $"{string.Join("、", dups.Select(d => $"{d.Name}（{d.Count} 个）"))}");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -738,14 +820,38 @@ public sealed partial class SortPage : Page
             HostServices.TriggerPhrased(); // 触发宿主事件：主页/详情/重建后的扩展库页统一刷新
         }
 
+        // 重复角色明细对话框（InfoBar 只有 10 秒且只有总数——具体游戏/角色在此列全）
+        if (dupGames.Count > 0)
+        {
+            try
+            {
+                var lines = dupGames.Select(g =>
+                    $"· {g.GameName}：{string.Join("、", g.Dups.Select(d => $"{d.Name}（{d.Count} 个）"))}");
+                var dupDialog = new ContentDialog
+                {
+                    XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+                    Title = $"检测到重复角色（共 {dupTotal} 个）",
+                    Content = $"以下游戏存在 bgm/vndb 角色 id 相同的重复角色：\n\n{string.Join("\n", lines)}\n\n" +
+                              "插件不会自动删除，请在游戏详情页手动删除多余的角色。",
+                    CloseButtonText = "知道了",
+                };
+                await dupDialog.ShowAsync();
+            }
+            catch { /* 窗口/页面已销毁则跳过（汇总里仍可见数量） */ }
+        }
+
         Plugin.HostApi.Info(InfoBarSeverity.Informational,
             title: "批量搜刮完成",
             msg: $"成功 {ok} / 简介锁定未动 {locked} / 未匹配 {noMatch} / 失败 {fail}" +
-                 (bgmClient.Token != null ? $" / Bangumi 标签 {bgmOk} 款" : ""),
+                 (bgmClient.Token != null ? $" / Bangumi 标签 {bgmOk} 款" : "") +
+                 $" / 角色简介 {charApplied} 个 / 角色改名 {charRenamedTotal} 个" +
+                 (charAddedTotal > 0 ? $" / 新增角色 {charAddedTotal} 个" : "") +
+                 (dupTotal > 0 ? $" / 检测到重复角色 {dupTotal} 个" : ""),
             displayTimeMs: 10000); // 10 秒，可读完整汇总
         Plugin.HostApi.Log(InfoBarSeverity.Informational,
             $"批量搜刮完成: ok={ok} locked={locked} noMatch={noMatch} fail={fail} " +
-            $"bgmToken={bgmClient.Token != null} bgmOk={bgmOk}");
+            $"bgmToken={bgmClient.Token != null} bgmOk={bgmOk} charApplied={charApplied} " +
+            $"charRenamed={charRenamedTotal} charAdded={charAddedTotal} dupDetected={dupTotal}");
     }
 
     /// <summary>把搜刮结果应用到游戏对象（批量不走宿主 ParseAsync，自行实现合并）</summary>

@@ -45,6 +45,43 @@ internal class KungalDetail
     [JsonPropertyName("engine")] public List<KungalEngine> Engine { get; set; } = new();
     [JsonPropertyName("official")] public List<KungalOfficial> Official { get; set; } = new();
     [JsonPropertyName("ratings")] public List<KungalRating> Ratings { get; set; } = new();
+    [JsonPropertyName("characters")] public List<KungalCharCard> Characters { get; set; } = new();
+}
+
+/// <summary>游戏详情的角色卡片（精简；角色简介需再拉角色详情接口）</summary>
+internal class KungalCharCard
+{
+    [JsonPropertyName("id")] public int Id { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("spoiler")] public int Spoiler { get; set; }
+}
+
+/// <summary>角色详情（/api/galgame-character/:id，匿名可访问）</summary>
+internal class KungalCharacter
+{
+    [JsonPropertyName("id")] public int Id { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("name_ja")] public string? NameJa { get; set; }
+    [JsonPropertyName("image")] public string? Image { get; set; }
+    [JsonPropertyName("figure")] public string? Figure { get; set; }
+    [JsonPropertyName("intro")] public string? Intro { get; set; }
+    [JsonPropertyName("intros")] public List<KungalCharIntro> Intros { get; set; } = new();
+    [JsonPropertyName("links")] public List<KungalCharLink> Links { get; set; } = new();
+}
+
+/// <summary>角色多语言简介条目（zh-Hans 为自动翻译，machine=true）</summary>
+internal class KungalCharIntro
+{
+    [JsonPropertyName("lang")] public string? Lang { get; set; }
+    [JsonPropertyName("intro")] public string? Intro { get; set; }
+    [JsonPropertyName("machine")] public bool Machine { get; set; }
+}
+
+/// <summary>角色外部链接（VNDB / Bangumi，角色匹配锚点）</summary>
+internal class KungalCharLink
+{
+    [JsonPropertyName("source")] public string? Source { get; set; }
+    [JsonPropertyName("url")] public string? Url { get; set; }
 }
 
 /// <summary>用户评分（galgame_type 为用户的类型投票：moe/plot/ba_saku/daily…）</summary>

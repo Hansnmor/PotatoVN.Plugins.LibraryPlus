@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using GalgameManager.Contracts.Phrase;
 using GalgameManager.Enums;
 using GalgameManager.Models;
+using PotatoVN.App.PluginBase.Helper.Bangumi;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase.Helper.Kungal;
@@ -49,7 +51,32 @@ public class KungalPhraser : IGalInfoPhraser
         {
             var fetched = await FetchDetailAsync(galgame);
             if (fetched == null) return null;
-            return BuildResult(galgame, fetched.Value.Detail);
+            Galgame result = BuildResult(galgame, fetched.Value.Detail);
+
+            // 原生设置页「使用游戏ID从数据源更新数据」选 kungal 时（galgame.RssType 已为 kungal），
+            // 绑定插件角色功能：角色简介（空/非中文才填）+ 简体中文名替换 + 已有缺图角色补图。
+            // 注意：此路径无确认弹窗，不补齐缺失角色（避免静默新增角色）；补齐只在批量搜刮对话框勾选时进行。
+            // 混合搜刮等其他调用路径 RssType 非 kungal，不触发。
+            if (galgame.RssType == (RssType)ParserId)
+            {
+                var (charApps, _, _, charNeedsImages) =
+                    await FetchCharacterIntrosAsync(galgame, fetched.Value.Detail, addMissing: false);
+                foreach (var (character, intro) in charApps)
+                    character.Summary = intro;
+                // 缺图角色并发下载（反射宿主 DownloadHelper；失败保持默认图，不影响主流程）
+                if (charNeedsImages.Count > 0)
+                {
+                    using var sem = new SemaphoreSlim(4);
+                    var imgTasks = charNeedsImages.Select(async c =>
+                    {
+                        await sem.WaitAsync();
+                        try { await HostServices.DownloadCharacterImagesAsync(c); }
+                        finally { sem.Release(); }
+                    });
+                    await Task.WhenAll(imgTasks);
+                }
+            }
+            return result;
         }
         catch (Exception e)
         {
@@ -212,13 +239,308 @@ public class KungalPhraser : IGalInfoPhraser
         return hasHan;
     }
 
+    /// <summary>
+    /// 批量搜刮用：并发拉取游戏全部角色的 kungal 详情后：
+    /// ① 匹配：Ids 锚点（VNDB/Bangumi 角色 id）优先，名称匹配（归一化精确 → Dice 重叠率）贪心唯一配对——
+    ///    解决 bgm 与 kungal 角色列表来源不一致（kungal 也会从 VNDB 收录角色、繁简体/空格差异）导致的漏配；
+    /// ② 简介：匹配上的角色空/非中文才填（复用游戏简介规则，已有中文不动）；
+    /// ③ 名字：日文名角色（含假名）从 bgm 角色页解析「简体中文名」替换（页面 HTML 是唯一来源，
+    ///    v0 API 无 name_cn 字段；无标签/抓取失败不动）；
+    /// ④ 补齐（addMissing）：kungal 有而库中没有的角色新建进 <see cref="Galgame.Characters"/>
+    ///    （简体中文名优先、中文简介，Ids 槽位回填 bgm/vndb 角色 id 供后续稳定匹配）；
+    /// ⑤ 图片：新增角色 + 已匹配但无本地图的角色填 kungal 图片 URL（PreviewImageUrl/ImageUrl 是内存字段，
+    ///    由调用方反射宿主 DownloadHelper 下载落盘：image=头像（预览），figure=立绘（大图），figure 缺失用 image 兜底）。
+    /// 剧透角色（spoiler&gt;0，隐藏女主/真结局角色）整条跳过——不匹配/不简介/不补齐，避免剧透。
+    /// </summary>
+    /// <returns>(应应用的 (角色, 中文简介) 列表, 已存在角色被改名的数量, 新增角色列表, 需要下载图片的角色列表)</returns>
+    internal async Task<(List<(GalgameCharacter Character, string Intro)> Intros, int Renamed,
+        List<GalgameCharacter> Added, List<GalgameCharacter> NeedsImages)>
+        FetchCharacterIntrosAsync(Galgame game, KungalDetail detail, bool addMissing = false)
+    {
+        var result = new List<(GalgameCharacter, string)>();
+        var addedChars = new List<GalgameCharacter>();
+        var needsImages = new List<GalgameCharacter>();
+        int renamed = 0;
+        var cards = detail.Characters.Where(c => c.Spoiler <= 0).ToList(); // 剧透角色整条跳过
+        if (cards.Count == 0) return (result, renamed, addedChars, needsImages);
+
+        // 并发拉取全部角色详情（HttpClient 异步 IO 不占线程；每请求 200ms 节流同时生效）
+        KungalCharacter?[] details = await Task.WhenAll(
+            cards.Select(c => _client.GetCharacterAsync(c.Id)));
+        var kcs = details.Where(k => k != null).Cast<KungalCharacter>().ToList();
+        if (kcs.Count == 0) return (result, renamed, addedChars, needsImages);
+
+        // 收集需要 bgm 简体中文名的角色：勾选补齐时拉全部（cn 参与匹配，防「Ymgal 中文名角色 vs kungal
+        // 日文名+cn」配对不上导致的重复补齐）；否则只拉日文名角色（仅用于改名）
+        var bgmClient = new BgmClient();
+        var cnMap = new Dictionary<int, string>();
+        var nameNeed = new List<(int BgmId, int Ki)>();
+        for (int i = 0; i < kcs.Count; i++)
+        {
+            var (_, bgmId) = ExtractLinkIds(kcs[i].Links);
+            if (bgmId == null || !int.TryParse(bgmId, out int bgm)) continue;
+            if (addMissing || IsJapaneseName(kcs[i].Name)) nameNeed.Add((bgm, i));
+        }
+        using (var sem = new SemaphoreSlim(3)) // 网页服务礼貌限流
+        {
+            var tasks = nameNeed.Select(async n =>
+            {
+                await sem.WaitAsync();
+                try
+                {
+                    string? cn = await bgmClient.GetCharacterCnNameAsync(n.BgmId);
+                    if (!string.IsNullOrWhiteSpace(cn)) cnMap[n.BgmId] = cn;
+                }
+                finally
+                {
+                    sem.Release();
+                }
+            });
+            await Task.WhenAll(tasks);
+        }
+
+        // 匹配：Ids 锚点 + 名称贪心唯一配对（bgm 简体中文名也参与名称匹配——Ymgal 源角色只有
+        // 中文名、Ids 无 bgm/vndb id 时，靠 cn 与库角色名配对，防重复补齐）
+        (GalgameCharacter? Target, double Score)[] matched = MatchCharacters(game, kcs, cnMap);
+
+        // 应用：简介 / 改名 / 补齐
+        for (int i = 0; i < kcs.Count; i++)
+        {
+            KungalCharacter kc = kcs[i];
+            var (vndbId, bgmId) = ExtractLinkIds(kc.Links);
+            string? intro = PickCharacterIntro(kc);
+            string? cn = null;
+            if (bgmId != null && int.TryParse(bgmId, out int bgmKey))
+                cnMap.TryGetValue(bgmKey, out cn);
+
+            if (matched[i].Target is { } target)
+            {
+                // 简介：空或非中文才填
+                if (!string.IsNullOrWhiteSpace(intro) && !IsChinese(target.Summary))
+                    result.Add((target, intro));
+                // 名字：日文名 → 简体中文名
+                if (!string.IsNullOrWhiteSpace(cn) && cn != target.Name && IsJapaneseName(target.Name))
+                {
+                    target.Name = cn;
+                    renamed++;
+                }
+                // 图片：已匹配但无本地图的角色补 kungal 图（上轮补齐/手动添加的角色缺图）
+                if (!string.IsNullOrWhiteSpace(kc.Image) &&
+                    (string.IsNullOrWhiteSpace(target.PreviewImagePath) ||
+                     target.PreviewImagePath == Galgame.DefaultCharacterImagePath))
+                {
+                    target.PreviewImageUrl = kc.Image;
+                    target.ImageUrl = string.IsNullOrWhiteSpace(kc.Figure) ? kc.Image : kc.Figure;
+                    needsImages.Add(target);
+                }
+            }
+            else if (addMissing)
+            {
+                // 补齐：kungal 有而库中没有的角色一律新建（拿全角色列表）。
+                // 无中文简介/无 bgm 简体中文名时保留日文名与空简介（有中文优先）；Ids 回填供后续匹配；
+                // 图片 URL 填内存字段，由调用方下载落盘：image=头像（预览），figure=立绘（大图），figure 缺失用 image 兜底
+                var nc = new GalgameCharacter
+                {
+                    Name = cn ?? kc.Name ?? "",
+                    PreviewImageUrl = kc.Image,
+                    ImageUrl = string.IsNullOrWhiteSpace(kc.Figure) ? kc.Image : kc.Figure,
+                };
+                if (vndbId != null) nc.Ids[(int)RssType.Vndb] = vndbId;
+                if (bgmId != null) nc.Ids[(int)RssType.Bangumi] = bgmId;
+                game.Characters.Add(nc);
+                addedChars.Add(nc);
+                needsImages.Add(nc);
+                if (!string.IsNullOrWhiteSpace(intro))
+                    result.Add((nc, intro));
+            }
+        }
+        return (result, renamed, addedChars, needsImages);
+    }
+
+    /// <summary>是否日文名（含假名即日文；「・」与「ー」不算假名，与 <see cref="IsChinese"/> 对称）</summary>
+    internal static bool IsJapaneseName(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        foreach (char c in text)
+            if (c >= '\u3040' && c <= '\u30FF' && c != '\u30FB' && c != '\u30FC')
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// 检测同游戏内「确定重复」的角色（bgm 角色 id 相同，或 vndb 角色 id 相同——同一实体，零误判）。
+    /// 注意：bgm id 与 vndb id 是不同命名空间（都可能是纯数字），key 加前缀区分防误判。
+    /// 只检测不删除：删除是破坏性操作，重复角色的处置由用户决定。
+    /// </summary>
+    /// <returns>重复角色组列表：(组内首个角色名, 组内角色数)；无重复返回空列表</returns>
+    internal static List<(string Name, int Count)> DetectDuplicateCharacters(Galgame game)
+    {
+        var groups = new Dictionary<string, List<string>>();
+        foreach (GalgameCharacter c in game.Characters)
+        {
+            string? bgm = c.Ids[(int)RssType.Bangumi];
+            string? vndb = c.Ids[(int)RssType.Vndb];
+            string? id = null;
+            if (!string.IsNullOrWhiteSpace(bgm) && bgm != "-1") id = "b:" + bgm;
+            else if (!string.IsNullOrWhiteSpace(vndb) && vndb != "-1") id = "v:" + vndb;
+            if (id is null) continue; // 无外链 id 的角色无法确定重复
+            if (!groups.TryGetValue(id, out List<string>? list)) groups[id] = list = new();
+            list.Add(c.Name);
+        }
+        var result = new List<(string, int)>();
+        foreach (List<string> g in groups.Values)
+            if (g.Count > 1) result.Add((g[0], g.Count));
+        return result;
+    }
+
+    /// <summary>角色简介取中文：intros 里 zh-Hans/zh-CN 优先，其次任意 zh，兜底单语言 intro 字段（须中文）</summary>
+    private static string? PickCharacterIntro(KungalCharacter kc)
+    {
+        string? fallback = null;
+        foreach (KungalCharIntro it in kc.Intros)
+        {
+            string lang = it.Lang?.ToLowerInvariant() ?? "";
+            string text = it.Intro ?? "";
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            string clean = KungalClient.HtmlToText(text).Trim();
+            if (clean.Length == 0) continue;
+            if (lang.StartsWith("zh-hans") || lang == "zh-cn") return clean;
+            if (lang.StartsWith("zh") && fallback == null) fallback = clean;
+        }
+        if (fallback != null) return fallback;
+        if (!string.IsNullOrWhiteSpace(kc.Intro) && IsChinese(kc.Intro))
+            return KungalClient.HtmlToText(kc.Intro).Trim();
+        return null;
+    }
+
+    /// <summary>
+    /// 批量角色匹配：Ids 锚点（VNDB/Bangumi 角色 id）优先；名称匹配（归一化精确 → Dice 重叠率）按得分降序贪心，
+    /// 每个 PotatoVN 角色只配一个 kungal 角色（防相似名双胞胎错配）。
+    /// 名称候选：kungal 名 / latin 名 / bgm 简体中文名（cnMap）——简体中文名参与匹配是为了
+    /// 覆盖「库角色是中文名（Ymgal 源）而 kungal 名是日文」的场景，防重复补齐。
+    /// 得分：2=Ids 锚点，1=归一化名称精确，0.6~1=Dice 重叠（吸收繁简/空格/词序差异）。
+    /// 返回与 kcs 等长的数组。
+    /// </summary>
+    private static (GalgameCharacter? Target, double Score)[] MatchCharacters(
+        Galgame game, List<KungalCharacter> kcs, Dictionary<int, string> cnMap)
+    {
+        var result = new (GalgameCharacter? Target, double Score)[kcs.Count];
+        var pool = game.Characters.Select(c => (Char: c, Name: NormalizeName(c.Name))).ToList();
+        var used = new HashSet<GalgameCharacter>();
+
+        // 第一轮：Ids 锚点（跨来源匹配的关键——kungal 角色 links 与 PotatoVN 角色 Ids 槽位对齐）
+        for (int i = 0; i < kcs.Count; i++)
+        {
+            var (vndbId, bgmId) = ExtractLinkIds(kcs[i].Links);
+            foreach (var (c, _) in pool)
+            {
+                if (used.Contains(c)) continue;
+                // VNDB 角色 id 归一化：PotatoVN 存 "c165241"（VndbPhraser 只去 v 前缀），kungal 侧已去 c——统一比较
+                if ((vndbId != null && NormalizeVndbCharId(c.Ids[(int)RssType.Vndb]) == vndbId) ||
+                    (bgmId != null && c.Ids[(int)RssType.Bangumi] == bgmId))
+                {
+                    result[i] = (c, 2.0);
+                    used.Add(c);
+                    break;
+                }
+            }
+        }
+
+        // 第二轮：名称匹配（精确 → Dice），候选集按得分降序贪心分配
+        var cands = new List<(int Ki, GalgameCharacter C, double Score)>();
+        for (int i = 0; i < kcs.Count; i++)
+        {
+            if (result[i].Target != null) continue;
+            string? n1 = NormalizeName(kcs[i].Name);
+            string? n2 = NormalizeName(kcs[i].NameJa);
+            string? n3 = null;
+            var (_, bgmId) = ExtractLinkIds(kcs[i].Links);
+            if (bgmId != null && int.TryParse(bgmId, out int b) && cnMap.TryGetValue(b, out string? cn))
+                n3 = NormalizeName(cn);
+            foreach (var (c, poolName) in pool)
+            {
+                if (used.Contains(c) || poolName == null) continue;
+                double s = 0;
+                foreach (string? nx in new[] { n1, n2, n3 })
+                {
+                    if (nx == null) continue;
+                    if (poolName == nx)
+                    {
+                        s = 1.0; // 归一化后精确相等（吸收空格/全角/大小写差异）
+                        break;
+                    }
+                    // Dice 字符重叠率：吸收繁简差异（如「倉田サナエ」vs「仓田サナエ」≈0.67）；短名不参与防误配
+                    if (poolName.Length >= 2 && nx.Length >= 2)
+                    {
+                        double d = CharOverlap(poolName, nx);
+                        if (d > s) s = d;
+                    }
+                }
+                if (s >= 0.6) cands.Add((i, c, s));
+            }
+        }
+        foreach (var (ki, c, s) in cands.OrderByDescending(x => x.Score))
+        {
+            if (result[ki].Target != null || used.Contains(c)) continue;
+            result[ki] = (c, s);
+            used.Add(c);
+        }
+        return result;
+    }
+
+    /// <summary>从 links 提取 VNDB/Bangumi 角色 id（vndb.org/c165241 → "165241"；bgm.tv/character/211740 → "211740"）</summary>
+    private static (string? VndbId, string? BgmId) ExtractLinkIds(List<KungalCharLink> links)
+    {
+        string? vndb = null, bgm = null;
+        foreach (KungalCharLink link in links)
+        {
+            string? url = link.Url;
+            if (string.IsNullOrWhiteSpace(url)) continue;
+            string? last = url.TrimEnd('/').Split('/').LastOrDefault();
+            if (last == null) continue;
+            switch (link.Source?.ToLowerInvariant())
+            {
+                case "vndb" when last.StartsWith("c"): vndb = last[1..]; break;
+                case "bangumi": bgm = last; break;
+            }
+        }
+        return (vndb, bgm);
+    }
+
+    /// <summary>名称归一化：去空白、全角转半角、小写（角色名兜底匹配用）</summary>
+    private static string? NormalizeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var sb = new System.Text.StringBuilder(name.Length);
+        foreach (char c in name)
+        {
+            if (char.IsWhiteSpace(c)) continue;
+            if (c >= '\uFF01' && c <= '\uFF5E') sb.Append((char)(c - 0xFEE0)); // 全角→半角
+            else sb.Append(char.ToLowerInvariant(c));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>VNDB 角色 id 归一化：去 c/v 前缀（"c165241"/"v165241" → "165241"）。
+    /// PotatoVN VndbPhraser 存角色 id 时只去 v 前缀不去 c（"c165241"），kungal 侧 ExtractLinkIds 已去 c。</summary>
+    private static string? NormalizeVndbCharId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        return id.StartsWith("c") || id.StartsWith("v") ? id[1..] : id;
+    }
+
     /// <summary>三层匹配：gid 记忆 → vndb_id 搜索 → 名称搜索</summary>
     private async Task<int?> MatchGidAsync(Galgame galgame)
     {
-        // ① gid 记忆（IdForPlugins 随游戏持久化）
+        // ① gid 记忆（IdForPlugins 随游戏持久化；原生设置页「使用游戏ID从数据源更新数据」在
+        //    RssType=kungal 时 Gal.Id 属性路由到同一槽位——按 ID 更新即命中此层）
         if (galgame.IdForPlugins.GetValueOrDefault(ParserId) is { } remembered &&
             int.TryParse(remembered, out int gid) && gid > 0)
+        {
+            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                $"kungal 按 ID 直连: gid={gid} ({(galgame.RssType == (RssType)ParserId ? "设置页按 ID 更新" : "历史记忆")})");
             return gid;
+        }
 
         // ② vndb_id 搜索（主路径）
         // 注意：PotatoVN 存的 VNDB ID 不带 v 前缀（VndbPhraser 去掉了），kungal 索引带 v —— 需尝试两种格式
