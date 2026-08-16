@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -17,6 +18,31 @@ internal class BgmTag
 internal class BgmSubjectResponse
 {
     [JsonPropertyName("tags")] public List<BgmTag>? Tags { get; set; }
+}
+
+/// <summary>v1 搜索接口响应（搜索是匿名访问 R18 条目的唯一可靠路径）</summary>
+internal class BgmSearchResult
+{
+    [JsonPropertyName("list")] public List<BgmSearchItem>? List { get; set; }
+}
+
+internal class BgmSearchItem
+{
+    [JsonPropertyName("id")] public int Id { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("rating")] public BgmSearchRating? Rating { get; set; }
+}
+
+internal class BgmSearchRating
+{
+    [JsonPropertyName("score")] public double Score { get; set; }
+    [JsonPropertyName("total")] public int Total { get; set; }
+}
+
+/// <summary>v0 详情接口响应（评分部分，带 token 拉取用）</summary>
+internal class BgmSubjectRatingResponse
+{
+    [JsonPropertyName("rating")] public BgmSearchRating? Rating { get; set; }
 }
 
 /// <summary>
@@ -54,6 +80,60 @@ internal class BgmClient
             var json = await response.Content.ReadAsStringAsync();
             var subject = JsonSerializer.Deserialize<BgmSubjectResponse>(json);
             return subject?.Tags;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// v1 搜索接口补拉条目评分（匿名可用，v0 详情接口对部分条目 404）。
+    /// 匹配策略：① 结果中 id 精确锚定 <paramref name="bgmId"/>；② 未命中取第一个有评分的（v1 按相关度排序）。
+    /// 返回 (score, count)；无匹配返回 null。
+    /// </summary>
+    public async Task<(double Score, int Count)?> SearchScoreAsync(int bgmId, string keyword)
+    {
+        if (RequestDelay > TimeSpan.Zero) await Task.Delay(RequestDelay);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                $"{BaseUrl}/search/subject/{Uri.EscapeDataString(keyword)}?type=4&responseGroup=large");
+            request.Headers.UserAgent.ParseAdd("PotatoVN.LibraryPlus/1.0 (plugin)");
+            using var response = await Client.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return null;
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<BgmSearchResult>(json);
+            if (result?.List is null) return null;
+
+            BgmSearchItem? hit = result.List.FirstOrDefault(s => s.Id == bgmId && s.Rating is { Score: > 0, Total: > 0 });
+            hit ??= result.List.FirstOrDefault(s => s.Rating is { Score: > 0, Total: > 0 });
+            if (hit?.Rating is not { } rating || rating.Score <= 0 || rating.Total <= 0) return null;
+            return (rating.Score, rating.Total);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// v0 详情接口 + Bearer token（宿主登录态）拉取评分。
+    /// 匿名 v0 对部分条目（R18 等）404，带 token 全量可见——作为搜索关键词未命中时的终极兜底。
+    /// </summary>
+    public async Task<(double Score, int Count)?> GetScoreByTokenAsync(int subjectId, string token)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/v0/subjects/{subjectId}");
+            request.Headers.UserAgent.ParseAdd("PotatoVN.LibraryPlus/1.0 (plugin)");
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+            using var response = await Client.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return null;
+            var json = await response.Content.ReadAsStringAsync();
+            var subject = JsonSerializer.Deserialize<BgmSubjectRatingResponse>(json);
+            if (subject?.Rating is not { } rating || rating.Score <= 0 || rating.Total <= 0) return null;
+            return (rating.Score, rating.Total);
         }
         catch
         {

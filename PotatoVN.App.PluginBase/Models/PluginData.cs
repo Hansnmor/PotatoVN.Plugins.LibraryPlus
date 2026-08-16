@@ -65,6 +65,30 @@ public partial class PluginData : ObservableRecipient
     /// 供分类器作社区投票信号（补充 kungal 盲区，如 kungal 无「拔作」tag 的游戏）。
     /// </summary>
     [ObservableProperty] private Dictionary<string, List<BgmTagData>> _bgmData = new();
+
+    /// <summary>
+    /// 加权评分缓存（统一，独立于 kungal）：gameUuid → 两站评分。
+    /// 进详情页时从 VNDB / bangumi 官方 API 直查采集；卡片与「按加权评分」排序共用。
+    /// 注意：字典整体替换赋值才会触发持久化（集合内修改不触发 PropertyChanged）。
+    /// </summary>
+    [ObservableProperty] private Dictionary<string, RatingData> _ratingCache = new();
+}
+
+/// <summary>加权评分缓存条目（VNDB / bangumi 官方 API 采集）</summary>
+public class RatingData
+{
+    /// <summary>bangumi 评分（10 分制；无则 0）</summary>
+    public double BgmScore { get; set; }
+
+    public int BgmCount { get; set; }
+
+    /// <summary>vndb 评分（10 分制，VNDB API 贝叶斯分；无则 0）</summary>
+    public double VndbScore { get; set; }
+
+    public int VndbCount { get; set; }
+
+    /// <summary>拉取时间（缓存命中不再刷新；后续可加过期策略）</summary>
+    public DateTime FetchedAt { get; set; }
 }
 
 /// <summary>某款游戏的 kungal 数据（批量搜刮时从详情采集，供 M3 投票分类使用）</summary>

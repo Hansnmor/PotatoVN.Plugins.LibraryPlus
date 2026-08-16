@@ -46,6 +46,18 @@ internal class KungalDetail
     [JsonPropertyName("official")] public List<KungalOfficial> Official { get; set; } = new();
     [JsonPropertyName("ratings")] public List<KungalRating> Ratings { get; set; } = new();
     [JsonPropertyName("characters")] public List<KungalCharCard> Characters { get; set; } = new();
+    [JsonPropertyName("external_ratings")] public List<KungalExternalRating> ExternalRatings { get; set; } = new();
+}
+
+/// <summary>外部网站评分（kungal 聚合的 bangumi / vndb / erogamescape 评分）</summary>
+internal class KungalExternalRating
+{
+    [JsonPropertyName("source")] public string? Source { get; set; }
+
+    /// <summary>评分（bangumi/vndb 为 10 分制；erogamescape 为 100 分制）</summary>
+    [JsonPropertyName("score")] public double? Score { get; set; }
+
+    [JsonPropertyName("vote_count")] public int VoteCount { get; set; }
 }
 
 /// <summary>游戏详情的角色卡片（精简；角色简介需再拉角色详情接口）</summary>

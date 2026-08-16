@@ -9,6 +9,11 @@
     xmlns:prefabs="using:PotatoVN.App.PluginBase.Controls.Prefabs"
     mc:Ignorable="d">
 
+    <!-- Ctrl+F 展开搜索框（对齐原生 InlineSearchAutoSuggestBox 快捷键） -->
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="OnCtrlF_Invoked" />
+    </Page.KeyboardAccelerators>
+
     <Page.Resources>
         <!-- 游戏右键菜单（与原生游戏库页一致） -->
         <MenuFlyout x:Name="GameFlyout" Opening="GameFlyout_Opening">
@@ -58,21 +63,48 @@
         </MenuFlyout>
     </Page.Resources>
 
-    <Grid>
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- 工具栏：排序（唯一与原页面的差异） -->
-        <CommandBar Grid.Row="0" DefaultLabelPosition="Right">
-            <!-- 功能说明（放第一个，避免被 CommandBar 折叠进溢出菜单） -->
-            <AppBarButton Label="功能说明" Click="Help_Click" ToolTipService.ToolTip="插件功能简介">
+        <!-- 工具栏：排序（唯一与原页面的差异）；IsDynamicOverflowEnabled=False 防止按钮被折叠进溢出菜单（保证搜索按钮坐标稳定） -->
+        <CommandBar Grid.Row="0" DefaultLabelPosition="Right" IsDynamicOverflowEnabled="False">
+            <!-- 功能说明（放第一个，避免被 CommandBar 折叠进溢出菜单）；x:Name 供搜索按钮做高度对齐基准 -->
+            <AppBarButton x:Name="HelpButton" Label="功能说明" Click="Help_Click" ToolTipService.ToolTip="插件功能简介">
                 <AppBarButton.Icon>
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE897;" />
                 </AppBarButton.Icon>
             </AppBarButton>
+            <!-- 搜索入口：AppBarButton 与搜索框重叠于同一容器（原生 InlineSearchAutoSuggestBox 结构，位置天然正确）；
+                 按钮 Content 自绘横排一行，Height 钳制到 AppBarButton 标准高度 -->
+            <AppBarElementContainer>
+                <Grid>
+                    <!-- Height 不写死：页面 Loaded 后按 HelpButton 实际高度对齐（宿主主题不同，按钮高度可能非 40） -->
+                    <AppBarButton x:Name="SearchButton" VerticalAlignment="Center" Click="SearchToggle_Click"
+                                  ToolTipService.ToolTip="搜索游戏（名称/中文名/原名/开发商/标签，Ctrl+F）">
+                        <AppBarButton.Content>
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE721;" FontSize="16" />
+                                <TextBlock Text="搜索" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </AppBarButton.Content>
+                    </AppBarButton>
+                    <!-- 高度由代码设置（紧凑输入框高度 32，居中于按钮区域，与宿主主页原生搜索框观感一致；
+                         不能对齐到按钮控件高度 48——按钮可见内容只有图标+文字约 20 高，48 高实心输入框
+                         视觉会凸出近两倍）。MinHeight=0 防止宿主主题最小高度把紧凑高度撑破。
+                         本 Border 只做宽度动画容器：不加 Background/Padding/CornerRadius——
+                         加背景会在 AutoSuggestBox 周围露边，形成左右两条半透明圆角浅色块（用户截图确认） -->
+                    <Border x:Name="SearchOverlay" Width="0" HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Opacity="0" IsHitTestVisible="False">
+                        <!-- 无 QueryIcon：与原生 InlineSearchAutoSuggestBox 一致（原生展开后右侧是 × 清除按钮，不是放大镜） -->
+                        <AutoSuggestBox x:Name="SearchBox" PlaceholderText="搜索游戏" VerticalAlignment="Stretch" MinHeight="0"
+                                        TextChanged="SearchBox_TextChanged" LostFocus="SearchBox_LostFocus" />
+                    </Border>
+                </Grid>
+            </AppBarElementContainer>
             <AppBarButton Icon="Sort" Label="排序">
                 <AppBarButton.Flyout>
                     <MenuFlyout>
@@ -87,6 +119,8 @@
                                              CommandParameter="PlayCount" Click="PrimaryKey_Click" />
                         <RadioMenuFlyoutItem x:Name="PrimaryMyRate" Text="按我的评分" GroupName="SortPrimary"
                                              CommandParameter="MyRate" Click="PrimaryKey_Click" />
+                        <RadioMenuFlyoutItem x:Name="PrimaryWeightedScore" Text="按加权评分" GroupName="SortPrimary"
+                                             CommandParameter="WeightedScore" Click="PrimaryKey_Click" />
                         <MenuFlyoutSeparator />
                         <ToggleMenuFlyoutItem x:Name="PrimaryDescendingItem" Text="主键降序" Click="PrimaryDescending_Click" />
                         <MenuFlyoutSeparator />
@@ -102,6 +136,8 @@
                                                  CommandParameter="PlayCount" Click="SecondaryKey_Click" />
                             <RadioMenuFlyoutItem x:Name="SecondaryMyRate" Text="按我的评分" GroupName="SortSecondary"
                                                  CommandParameter="MyRate" Click="SecondaryKey_Click" />
+                            <RadioMenuFlyoutItem x:Name="SecondaryWeightedScore" Text="按加权评分" GroupName="SortSecondary"
+                                                 CommandParameter="WeightedScore" Click="SecondaryKey_Click" />
                             <MenuFlyoutSeparator />
                             <ToggleMenuFlyoutItem x:Name="SecondaryDescendingItem" Text="次键降序" Click="SecondaryDescending_Click" />
                         </MenuFlyoutSubItem>
@@ -142,7 +178,12 @@
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE762;" />
                 </AppBarToggleButton.Icon>
             </AppBarToggleButton>
-            <AppBarButton Icon="Download" Label="更多搜刮" Click="BatchScrape_Click" ToolTipService.ToolTip="对当前筛选的游戏批量用 kungal 搜刮（中文简介 + 标签）" />
+            <AppBarButton x:Name="BatchScrapeButton" Icon="Download" Label="更多搜刮" Click="BatchScrape_Click" ToolTipService.ToolTip="对当前筛选的游戏批量用 kungal 搜刮（中文简介 + 标签）" />
+            <AppBarButton x:Name="BatchRatingButton" Label="计算评分" Click="BatchRating_Click" ToolTipService.ToolTip="批量拉取 bangumi / vndb 官方评分，生成加权综合评分（供排序与详情页卡片使用）">
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE735;" />
+                </AppBarButton.Icon>
+            </AppBarButton>
             <CommandBar.Content>
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"

@@ -12,7 +12,11 @@ using GalgameManager.WinApp.Base.Contracts.NavigationApi;
 using GalgameManager.WinApp.Base.Contracts.NavigationApi.NavigateParameters;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using PotatoVN.App.PluginBase.Helper;
+using Windows.Foundation;
 using PotatoVN.App.PluginBase.Helper.Bangumi;
 using PotatoVN.App.PluginBase.Helper.Kungal;
 using PotatoVN.App.PluginBase.Models;
@@ -43,6 +47,16 @@ public sealed partial class SortPage : Page
     public SortPage()
     {
         XamlResourceLocatorFactory.PluginControlInit(ref _contentLoaded, this);
+
+        // 搜索框收起兜底：WinUI 中点击不可聚焦区域（工具栏空白/页面空白等）不会移动焦点，
+        // 单独靠 SearchBox.LostFocus 收不到；PointerPressed 是冒泡路由事件，
+        // AddHandler(handledEventsToo:true) 能收到所有按下（含按钮等已处理事件的元素），
+        // 在 OnRootPointerPressed 里统一判断"按下的目标是否在搜索框内"。
+        RootGrid.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnRootPointerPressed), true);
+
+        // 搜索按钮/搜索框高度对齐：宿主主题下 AppBarButton 实际高度不一定是 40，
+        // 布局完成后以「功能说明」按钮为准，让搜索相关元素与其他按钮完全等高
+        Loaded += OnPageLoaded;
 
         // 页面重建（如从详情页返回）后，把侧边栏选中指示器移回「更多排序」
         SidebarSelectionHelper.SelectPluginButton("libraryPlus");
@@ -120,6 +134,7 @@ public sealed partial class SortPage : Page
         "PlayTime" => new NumericValueComparer(g => g.TotalPlayTime, descending),
         "PlayCount" => new NumericValueComparer(g => g.PlayCount, descending),
         "MyRate" => new NumericValueComparer(g => g.MyRate, descending),
+        "WeightedScore" => new WeightedScoreComparer(descending),
         // 兜底：未知键不改变顺序
         _ => new NumericValueComparer(_ => 0, false),
     };
@@ -133,6 +148,7 @@ public sealed partial class SortPage : Page
         PrimaryPlayTime.IsChecked = primary == "PlayTime";
         PrimaryPlayCount.IsChecked = primary == "PlayCount";
         PrimaryMyRate.IsChecked = primary == "MyRate";
+        PrimaryWeightedScore.IsChecked = primary == "WeightedScore";
         PrimaryDescendingItem.IsChecked = Plugin.Data.PrimaryDescending;
 
         string secondary = Plugin.Data.SecondarySortKey;
@@ -141,6 +157,7 @@ public sealed partial class SortPage : Page
         SecondaryPlayTime.IsChecked = secondary == "PlayTime";
         SecondaryPlayCount.IsChecked = secondary == "PlayCount";
         SecondaryMyRate.IsChecked = secondary == "MyRate";
+        SecondaryWeightedScore.IsChecked = secondary == "WeightedScore";
         SecondaryDescendingItem.IsChecked = Plugin.Data.SecondaryDescending;
     }
 
@@ -188,6 +205,30 @@ public sealed partial class SortPage : Page
 
             if (px is null && py is null) return 0;
             if (px is null) return 1; // 未知时长排在后面
+            if (py is null) return -1;
+
+            int cmp = px.Value.CompareTo(py.Value);
+            return _descending ? -cmp : cmp;
+        }
+    }
+
+    /// <summary>
+    /// 按加权综合评分比较游戏（bangumi/vndb 双源 √n 加权，见 <see cref="WeightedScoreHelper"/>）。
+    /// 无评分数据（未搜刮 kungal / 未采集评分）恒排最后，无论升序降序。
+    /// </summary>
+    private sealed class WeightedScoreComparer : IComparer
+    {
+        private readonly bool _descending;
+
+        public WeightedScoreComparer(bool descending) => _descending = descending;
+
+        public int Compare(object? x, object? y)
+        {
+            double? px = x is Galgame gx ? WeightedScoreHelper.GetScore(gx) : null;
+            double? py = y is Galgame gy ? WeightedScoreHelper.GetScore(gy) : null;
+
+            if (px is null && py is null) return 0;
+            if (px is null) return 1; // 无评分排在后面
             if (py is null) return -1;
 
             int cmp = px.Value.CompareTo(py.Value);
@@ -336,10 +377,173 @@ public sealed partial class SortPage : Page
     private bool FilterGame(object? obj)
     {
         if (obj is not Galgame game) return false;
+        if (!SearchHelper.ApplySearchKey(game, _searchKeyword)) return false;
         if (!MatchesPlayTypeFilter(game)) return false;
         if (!MatchesCategory(game)) return false;
         if (!MatchesForm(game)) return false;
         return MatchesRange(game);
+    }
+
+    /// <summary>工具栏搜索词（页面级状态，与筛选 AND 联动；收起后清空）</summary>
+    private string _searchKeyword = "";
+
+    /// <summary>搜索框是否展开</summary>
+    private bool _searchExpanded;
+
+    /// <summary>
+    /// 搜索框（SearchOverlay）高度：紧凑输入框标准高度 32，居中于按钮高度区域。
+    /// 不能对齐到按钮控件高度（实测 48）——按钮可见内容只有图标+文字约 20 高，
+    /// 48 高实心输入框视觉凸出近两倍（用户截图证实）；32 与宿主主页原生搜索框观感一致。
+    /// </summary>
+    private const double SearchBoxHeight = 32;
+
+    /// <summary>
+    /// 页面首次布局完成后，搜索按钮高度对齐到「功能说明」按钮（标准 AppBarButton，
+    /// 高度由宿主主题决定，实测 48）；搜索框用紧凑高度 32 居中，两者视觉协调。
+    /// </summary>
+    private void OnPageLoaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= OnPageLoaded; // 一次性；CommandBar 高度不随窗口变化，无需重复对齐
+        if (HelpButton is null || HelpButton.ActualHeight <= 0) return;
+        double h = HelpButton.ActualHeight;
+        SearchButton.Height = h;
+        SearchOverlay.Height = SearchBoxHeight;
+        Debug.WriteLine($"[LibraryPlus] 工具栏高度对齐：HelpButton={h:F1} → SearchButton={h:F1}，SearchOverlay={SearchBoxHeight:F1}（紧凑输入框，居中）");
+    }
+
+    /// <summary>搜索按钮：未展开则展开（聚焦输入框）；已展开则仅聚焦（点空白/失焦由 PointerPressed/LostFocus 收起）</summary>
+    private void SearchToggle_Click(object sender, RoutedEventArgs e) => ExpandSearch();
+
+    private void ExpandSearch()
+    {
+        if (_searchExpanded)
+        {
+            FocusSearchBox();
+            return;
+        }
+        _searchExpanded = true;
+        ToggleSearchState(true);
+        // 强制搜索框高度=紧凑输入框高度：防 OnPageLoaded 未执行/时机偏差时高度退回内容值
+        SearchOverlay.Height = SearchBoxHeight;
+        AnimateSearchWidth(220);
+        FocusSearchBox();
+        Debug.WriteLine($"[LibraryPlus] 搜索框展开：Button={SearchButton.ActualHeight:F1} Overlay={SearchOverlay.ActualHeight:F1}");
+    }
+
+    /// <summary>
+    /// 让焦点进入搜索框。容器刚由 Collapsed→Visible 时内容可能尚未完成加载/模板实例化，
+    /// 立即 Focus() 会静默失败——焦点没进搜索框，之后点击别处就不会触发 LostFocus，
+    /// 自动收起整条事件链断裂（尝试 6 失败的直接原因）。直接聚焦失败则挂 Loaded 等模板
+    /// 就绪后再聚焦（一次性，聚焦后即摘除）。
+    /// </summary>
+    private void FocusSearchBox()
+    {
+        if (SearchBox.Focus(FocusState.Programmatic)) return;
+        SearchBox.Loaded -= SearchBox_Loaded_Focus;
+        SearchBox.Loaded += SearchBox_Loaded_Focus;
+    }
+
+    private void SearchBox_Loaded_Focus(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Loaded -= SearchBox_Loaded_Focus;
+        SearchBox.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>失焦收起（原生同款）：搜索词为空时点击页面空白/其他位置即收起</summary>
+    private void SearchBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_searchExpanded && string.IsNullOrEmpty(SearchBox.Text))
+            CollapseSearch();
+    }
+
+    /// <summary>
+    /// 页面级指针按下兜底：点击不可聚焦区域（工具栏空白、页面空白 Grid 等）在 WinUI 中
+    /// 不移动焦点，LostFocus 收不到；这里是收起的主要触发（对"点击页面空白处搜索框消失"
+    /// 的语义全覆盖，不依赖焦点机制）。按下的目标不在搜索框内且输入为空 → 收起。
+    /// </summary>
+    private void OnRootPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_searchExpanded) return;
+        if (e.OriginalSource is not DependencyObject source) return;
+        if (IsWithin(source, SearchOverlay)) return; // 点击搜索框自身（含清除按钮）不收起
+        if (string.IsNullOrEmpty(SearchBox.Text))
+            CollapseSearch();
+    }
+
+    /// <summary>判断 target 是否在 ancestor 的视觉子树内（含自身）</summary>
+    private static bool IsWithin(DependencyObject target, DependencyObject ancestor)
+    {
+        DependencyObject? node = target;
+        while (node != null)
+        {
+            if (node == ancestor) return true;
+            node = VisualTreeHelper.GetParent(node);
+        }
+        return false;
+    }
+
+    private void CollapseSearch()
+    {
+        if (!_searchExpanded) return;
+        _searchExpanded = false;
+        // 空输入折叠不触发刷新（避免整页刷新闪烁）；有搜索词时折叠清空并恢复列表
+        bool hadKeyword = !string.IsNullOrEmpty(_searchKeyword);
+        SearchBox.Text = "";
+        _searchKeyword = "";
+        if (hadKeyword) RefreshFilter();
+        ToggleSearchState(false);
+        AnimateSearchWidth(0);
+    }
+
+    /// <summary>按钮/搜索框显隐切换（与原生 ToggleState 一致：不展开时按钮可点，展开时搜索框可点）</summary>
+    private void ToggleSearchState(bool isExpanded)
+    {
+        SearchButton.IsHitTestVisible = !isExpanded;
+        SearchOverlay.IsHitTestVisible = isExpanded;
+        SearchButton.Opacity = isExpanded ? 0 : 1;
+        SearchOverlay.Opacity = isExpanded ? 1 : 0;
+    }
+
+    /// <summary>展开/收起宽度动画（搜索框右对齐，宽度增长即向左扩展，覆盖按钮与左侧功能说明）</summary>
+    private void AnimateSearchWidth(double targetWidth)
+    {
+        try
+        {
+            var storyboard = new Storyboard();
+            var animation = new DoubleAnimation
+            {
+                From = SearchOverlay.Width,
+                To = targetWidth,
+                Duration = TimeSpan.FromMilliseconds(180),
+                EnableDependentAnimation = true, // Width 是布局依赖属性，必须启用
+            };
+            Storyboard.SetTarget(animation, SearchOverlay);
+            Storyboard.SetTargetProperty(animation, "Width");
+            storyboard.Children.Add(animation);
+            storyboard.Begin();
+        }
+        catch
+        {
+            // 动画失败直接设置宽度
+            SearchOverlay.Width = targetWidth;
+        }
+    }
+
+    /// <summary>Ctrl+F 展开搜索框（对齐原生 InlineSearchAutoSuggestBox 的快捷键）</summary>
+    private void OnCtrlF_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ExpandSearch();
+        args.Handled = true;
+    }
+
+    /// <summary>搜索框输入：实时过滤（复用宿主原生搜索语义）</summary>
+    private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput &&
+            args.Reason != AutoSuggestionBoxTextChangeReason.ProgrammaticChange)
+            return;
+        _searchKeyword = sender.Text ?? "";
+        RefreshFilter();
     }
 
     /// <summary>内容轴分类匹配（萌作/剧情作/拔作/其他），All=全部；与形态轴、时长区间、状态筛选 AND 联动</summary>
@@ -525,6 +729,10 @@ public sealed partial class SortPage : Page
 · 原生源选择器可选 Kungal；设置页选 Kungal 后可用「游戏ID」按 gid 更新
 · 搜刮内容：中文简介、标签、角色中文简介、日文角色名换简体中文名、角色图片
 
+【在Kungal中打开】
+· 游戏经单次/批量 kungal 搜刮后（本地已保存 gid），详情页右上角「···」菜单会出现「在Kungal中打开」
+· 未搜刮过的游戏不显示该入口
+
 【批量搜刮】
 · 「更多搜刮」：对筛选或勾选的游戏批量拉取 kungal + Bangumi 数据
 · 简介规则：空或非中文才填充（已有中文简介不覆盖）
@@ -610,19 +818,27 @@ public sealed partial class SortPage : Page
         }
         else
         {
-            // 必须先 Clear 再切 None：None 模式下 SelectedItems 是无效集合，Clear 会抛 E_UNEXPECTED（框架 bug）
-            try
-            {
-                GameGridView.SelectedItems.Clear();
-            }
-            catch (System.Runtime.InteropServices.COMException)
-            {
-                // 框架 bug：忽略
-            }
-            GameGridView.SelectionMode = ListViewSelectionMode.None;
-            _batchSelection.Clear(); // 关闭多选清空勾选集
+            ExitMultiSelect();
         }
         GameGridView.IsMultiSelectCheckBoxEnabled = multi;
+    }
+
+    /// <summary>退出多选模式（批量操作完成后自动调用，免手动再点一次开关）。</summary>
+    private void ExitMultiSelect()
+    {
+        try { MultiSelectToggle.IsChecked = false; } catch { /* 页面销毁 */ }
+        // 必须先 Clear 再切 None：None 模式下 SelectedItems 是无效集合，Clear 会抛 E_UNEXPECTED（框架 bug）
+        try
+        {
+            GameGridView.SelectedItems.Clear();
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // 框架 bug：忽略
+        }
+        try { GameGridView.SelectionMode = ListViewSelectionMode.None; } catch { /* 页面销毁 */ }
+        _batchSelection.Clear(); // 关闭多选清空勾选集
+        try { GameGridView.IsMultiSelectCheckBoxEnabled = false; } catch { /* 页面销毁 */ }
     }
 
     /// <summary>当前操作目标游戏集：多选模式有勾选 → 用完整勾选集（_batchSelection，跨分类——从完整
@@ -686,8 +902,9 @@ public sealed partial class SortPage : Page
         bool addMissing = (dialog.Content as StackPanel)?.Children
             .OfType<CheckBox>().FirstOrDefault()?.IsChecked == true;
 
-        // 防重入：批量进行中禁用按钮，finally 恢复
+        // 防重入：批量进行中禁用按钮，finally 恢复；与「计算评分」互斥
         if (sender is AppBarButton scrapeButton) scrapeButton.IsEnabled = false;
+        try { BatchRatingButton.IsEnabled = false; } catch { /* 页面销毁 */ }
         // 批量期间禁用网格点击（防止导航销毁页面——宿主导航不取消异步方法，
         // 页面销毁后控件赋值会抛 COMException，async void 未处理异常会崩宿主）
         GameGridView.IsEnabled = false;
@@ -815,7 +1032,9 @@ public sealed partial class SortPage : Page
             Plugin.BatchStatusChanged?.Invoke();
             try { BatchProgressText.Text = ""; } catch { }
             try { if (sender is AppBarButton restoreButton) restoreButton.IsEnabled = true; } catch { }
+            try { BatchRatingButton.IsEnabled = true; } catch { } // 与「计算评分」互斥解除
             try { GameGridView.IsEnabled = true; GameGridView.Opacity = 1.0; } catch { }
+            try { if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple) ExitMultiSelect(); } catch { } // 批量完成自动退出多选
             try { OnHostPhrased(); } catch { } // 当前页面刷新（页面若已销毁则静默）
             HostServices.TriggerPhrased(); // 触发宿主事件：主页/详情/重建后的扩展库页统一刷新
         }
@@ -852,6 +1071,128 @@ public sealed partial class SortPage : Page
             $"批量搜刮完成: ok={ok} locked={locked} noMatch={noMatch} fail={fail} " +
             $"bgmToken={bgmClient.Token != null} bgmOk={bgmOk} charApplied={charApplied} " +
             $"charRenamed={charRenamedTotal} charAdded={charAddedTotal} dupDetected={dupTotal}");
+    }
+
+    /// <summary>
+    /// 批量计算评分：对当前筛选/勾选的游戏批量拉取 bangumi + vndb 官方评分（复用详情页同款逻辑），
+    /// 写入 RatingCache 供「按加权评分」排序与详情页卡片使用。
+    /// 确认框可勾选/取消「跳过已有缓存」：默认增量（跳过已缓存的）；取消勾选则全部重算
+    /// （如补了 bangumi/vndb id 后需要重新拉取）。
+    /// </summary>
+    private async void BatchRating_Click(object sender, RoutedEventArgs e)
+    {
+        List<Galgame> games = GetBatchTargets();
+        bool isSelected = games.Count > 0 &&
+                          GameGridView.SelectionMode == ListViewSelectionMode.Multiple;
+        if (!isSelected) games = _source.OfType<Galgame>().ToList(); // 非多选时 = 筛选集
+        if (games.Count == 0)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "当前筛选下没有游戏");
+            return;
+        }
+
+        // 默认增量：跳过已有缓存的游戏（含「无评分」标记——避免反复拉取无 id 的游戏）；
+        // 用户可取消勾选强制全量重算（如补了 bangumi/vndb id 后需要重新拉取）
+        bool skipCached = true;
+        int cachedCount = games.Count(g => Plugin.Data.RatingCache.ContainsKey(g.Uuid.ToString()));
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+            Title = "批量计算评分",
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"将对{(isSelected ? "选中的" : "当前筛选的")} {games.Count} 款游戏拉取评分：\n" +
+                               "· bangumi：官方 API 按 id 直查（未登录时走搜索兜底）\n" +
+                               "· vndb：官方 API 按 id 直查",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new CheckBox
+                    {
+                        Content = $"跳过已有评分缓存的游戏（本次将跳过 {cachedCount} 款；取消勾选则全部重新计算）",
+                        IsChecked = true, // 代码设置选中态
+                    },
+                },
+            },
+            PrimaryButtonText = "开始计算",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        skipCached = (dialog.Content as StackPanel)?.Children
+            .OfType<CheckBox>().FirstOrDefault()?.IsChecked == true;
+
+        // 目标集：勾选跳过 → 仅无缓存的；取消勾选 → 全部重算
+        List<Galgame> pending = skipCached
+            ? games.Where(g => !Plugin.Data.RatingCache.ContainsKey(g.Uuid.ToString())).ToList()
+            : games;
+        int skip = games.Count - pending.Count;
+        if (pending.Count == 0)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational,
+                title: "计算评分",
+                msg: $"当前 {games.Count} 款游戏均已计算过评分" + (skip > 0 ? $"（本次跳过 {skip} 款）" : ""));
+            return;
+        }
+
+        // 防重入 + 锁定（与批量搜刮同一套机制；页面切走再切回时恢复锁定与进度）；与「更多搜刮」互斥
+        if (sender is AppBarButton ratingButton) ratingButton.IsEnabled = false;
+        try { BatchScrapeButton.IsEnabled = false; } catch { /* 页面销毁 */ }
+        GameGridView.IsEnabled = false;
+        GameGridView.Opacity = 0.5;
+        Plugin.IsBatchScraping = true;
+        Plugin.BatchStatus = "评分计算准备中…";
+        Plugin.BatchStatusChanged?.Invoke();
+
+        int ok = 0, fail = 0;
+        try
+        {
+            for (int i = 0; i < pending.Count; i++)
+            {
+                Galgame game = pending[i];
+                Plugin.BatchStatus = $"计算评分中 {i + 1}/{pending.Count}：{game.Name.Value}";
+                Plugin.BatchStatusChanged?.Invoke();
+                try { BatchProgressText.Text = Plugin.BatchStatus; }
+                catch { /* 页面已销毁，忽略 */ }
+                try
+                {
+                    RatingData? rating = await Plugin.FetchRatingAsync(game, force: !skipCached);
+                    if (rating is not null && (rating.BgmScore > 0 || rating.VndbScore > 0))
+                        ok++;
+                    else
+                        fail++;
+                }
+                catch (Exception ex)
+                {
+                    fail++;
+                    Plugin.HostApi.Log(InfoBarSeverity.Warning,
+                        $"批量评分失败: {game.Name.Value} ({ex.Message})");
+                }
+            }
+        }
+        finally
+        {
+            Plugin.IsBatchScraping = false; // 先清全局状态，再恢复 UI
+            Plugin.BatchStatus = "";
+            Plugin.BatchStatusChanged?.Invoke();
+            try { BatchProgressText.Text = ""; } catch { }
+            try { if (sender is AppBarButton restoreButton) restoreButton.IsEnabled = true; } catch { }
+            try { BatchScrapeButton.IsEnabled = true; } catch { } // 与「更多搜刮」互斥解除
+            try { GameGridView.IsEnabled = true; GameGridView.Opacity = 1.0; } catch { }
+            try { if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple) ExitMultiSelect(); } catch { } // 批量完成自动退出多选
+            try { OnHostPhrased(); } catch { } // 刷新列表（按加权评分排序立即生效）
+        }
+
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            title: "批量评分完成",
+            msg: $"成功 {ok} / 无评分或失败 {fail}" + (skip > 0 ? $" / 跳过已有缓存 {skip}" : ""),
+            displayTimeMs: 8000);
+        Plugin.HostApi.Log(InfoBarSeverity.Informational,
+            $"批量评分完成: ok={ok} fail={fail} skip={skip} total={games.Count}");
     }
 
     /// <summary>把搜刮结果应用到游戏对象（批量不走宿主 ParseAsync，自行实现合并）</summary>

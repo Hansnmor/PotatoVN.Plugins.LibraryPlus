@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GalgameManager.Contracts.Phrase;
 using GalgameManager.WinApp.Base.Contracts;
+using GalgameManager.WinApp.Base.Contracts.PluginUi;
 using GalgameManager.WinApp.Base.Models;
 using PotatoVN.App.PluginBase.Helper;
 using PotatoVN.App.PluginBase.Helper.Kungal;
@@ -10,7 +11,7 @@ using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase
 {
-    public partial class Plugin : IPlugin, IParserProvider
+    public partial class Plugin : IPlugin, IParserProvider, IGalgamePageRightPanel
     {
         public static IPotatoVnApi HostApi { get; private set; } = null!;
 
@@ -83,11 +84,13 @@ namespace PotatoVN.App.PluginBase
             // 清除宿主「上次运行崩溃」历史残留（lastError 只累加从不清理，会持续弹旧崩溃提示）
             HostServices.ClearLastError();
             InitUi();
+            KungalOpenHelper.Initialize();
         }
 
         public Task OnUninstallAsync(bool deleteData, Action<TimeSpan> extendWaitHandler, CancellationToken cts)
         {
             if (cts.IsCancellationRequested) return Task.FromCanceled(cts);
+            KungalOpenHelper.Uninitialize();
             ResourceLoader.Unload(); // 卸载XAML资源字典
             return Task.CompletedTask;
         }
