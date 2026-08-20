@@ -35,6 +35,12 @@ public partial class PluginData : ObservableRecipient
     /// <summary>时长区间筛选键（All=全部/Under10/10to20/20to40/Over40/Unknown，默认全部）</summary>
     [ObservableProperty] private string _rangeKey = "All";
 
+    /// <summary>
+    /// 扩展库页工具栏搜索关键词（与排序/筛选等状态一致持久化）：
+    /// 页面切走再切回/应用重启后恢复，直到用户手动删除（清空后置 ""，不再恢复）。
+    /// </summary>
+    [ObservableProperty] private string _searchKeyword = "";
+
     /// <summary>内容分类筛选键（All=全部/Moe/Story/Nukige/Other，默认全部）</summary>
     [ObservableProperty] private string _categoryKey = "All";
 

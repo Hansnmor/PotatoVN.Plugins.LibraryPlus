@@ -9,10 +9,8 @@
     xmlns:prefabs="using:PotatoVN.App.PluginBase.Controls.Prefabs"
     mc:Ignorable="d">
 
-    <!-- Ctrl+F 展开搜索框（对齐原生 InlineSearchAutoSuggestBox 快捷键） -->
-    <Page.KeyboardAccelerators>
-        <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="OnCtrlF_Invoked" />
-    </Page.KeyboardAccelerators>
+    <!-- 注：不用 Page.KeyboardAccelerators 做 Ctrl+F——WinUI 3 会把 Page 级加速器文本附加到
+         页面上所有控件的 ToolTip（悬停封面冒 "Ctrl+F" 悬浮框）；且用户确认不需要快捷键，点按钮即可 -->
 
     <Page.Resources>
         <!-- 游戏右键菜单（与原生游戏库页一致） -->
@@ -84,7 +82,7 @@
                 <Grid>
                     <!-- Height 不写死：页面 Loaded 后按 HelpButton 实际高度对齐（宿主主题不同，按钮高度可能非 40） -->
                     <AppBarButton x:Name="SearchButton" VerticalAlignment="Center" Click="SearchToggle_Click"
-                                  ToolTipService.ToolTip="搜索游戏（名称/中文名/原名/开发商/标签，Ctrl+F）">
+                                  ToolTipService.ToolTip="搜索游戏（名称/中文名/原名/开发商/标签）">
                         <AppBarButton.Content>
                             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE721;" FontSize="16" />

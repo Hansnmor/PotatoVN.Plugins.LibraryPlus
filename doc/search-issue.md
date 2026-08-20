@@ -268,3 +268,9 @@ private void ToggleState(bool isExpanded)
    - `VerticalAlignment="Stretch"` 会被外层 Grid（CommandBar 容器拉伸）撑高，不可用于等高。
    - `Debug.WriteLine` 不进宿主日志文件（只进调试器），排查诊断要显示在 UI 上（`BatchProgressText`）或让用户截图。
    - AutoSuggestBox 在容器宽度≈0 时测量高度会异常（曾达 64），显式 Height 钳制即可。
+6. **搜索词持久化（2026-08-20 新增，用户需求：切走再切回搜索内容仍在，直到手动删除）**：
+   - `PluginData.SearchKeyword` 持久化搜索词（随排序/筛选等页面状态一并自动保存）；
+   - `SortPage.RestoreSearchState()`：构造器恢复关键词 → 非空则展开搜索框、填入文本（不抢焦点、不播展开动画、直接铺开宽度）；
+   - **抗闪烁关键（两步，缺一不可）**：① 构造器先恢复全部页面状态（含搜索词）→ 挂 `_source.Filter = FilterGame` 并 `Refresh()` → **最后才** `GameGridView.ItemsSource = _source`，首次渲染即"已过滤"；② **抑制恢复那一次 TextChanged**：`RestoreSearchState` 设 `_restoringSearch=true` 再赋 `SearchBox.Text`，`SearchBox_TextChanged` 见标记只记状态、跳过 `RefreshFilter()`（`_source.Refresh()` 会触发 GridView Reset 重绘）。此前的写法（先绑 ItemsSource 再恢复并 RefreshFilter）会先显示全部、再重算过滤，切回时画面闪一下（用户 2026-08-20 两次实测反馈，已修）；
+   - `SearchBox_TextChanged` 每次输入即持久化；`CollapseSearch` 置空持久化（手动删除/清空后不再恢复）；
+   - 效果：详情页返回/应用重启后搜索内容仍在；点 × 或清空文本后消失。行为与原生主页搜索一致且更持久（原生仅会话内存、页面常驻不重搜；本实现连重启都保留——若需对齐原生"重启即清"，把持久化源从 PluginData 换回静态字段即可）。

@@ -63,14 +63,20 @@ public sealed partial class SortPage : Page
 
         List<Galgame> games = Plugin.HostApi.GetAllGames();
         _source = new AdvancedCollectionView(games, true);
-        GameGridView.ItemsSource = _source;
 
-        // 恢复持久化的页面状态（跨页面重建 / 应用重启保持）
+        // 恢复持久化的页面状态（跨页面重建 / 应用重启保持）。
+        // 顺序关键：先恢复全部状态（含搜索词），再挂上过滤器并一次性刷新，
+        // 最后才把 _source 绑给 GridView——保证首次渲染就是"已过滤"的列表。
+        // 否则切回页面会先显示全部、再重算过滤，画面闪一下（原生页因页面常驻缓存无此问题）。
         RestoreRangeState();
         RestoreCategoryState();
         RestoreFormState();
         RestoreSortMenuState();
+        RestoreSearchState();
         ApplySort();
+        _source.Filter = FilterGame;
+        _source.Refresh();
+        GameGridView.ItemsSource = _source;
         UpdateCountText();
         UpdateStatsText();
 
@@ -384,11 +390,19 @@ public sealed partial class SortPage : Page
         return MatchesRange(game);
     }
 
-    /// <summary>工具栏搜索词（页面级状态，与筛选 AND 联动；收起后清空）</summary>
+    /// <summary>工具栏搜索词（与筛选 AND 联动；持久化到 PluginData——切走再切回仍在，直到手动删除/清空）</summary>
     private string _searchKeyword = "";
 
     /// <summary>搜索框是否展开</summary>
     private bool _searchExpanded;
+
+    /// <summary>
+    /// 恢复搜索词进行中：抑制"恢复那一次 TextChanged"触发的 RefreshFilter。
+    /// 构造器已把过滤器在首次渲染前挂好并预刷一次，若再让恢复的 TextChanged 调
+    /// RefreshFilter()（内部 _source.Refresh() → GridView Reset 重绘），切回页面
+    /// 就会画面闪一下（用户 2026-08-20 实测反馈）。下一次真实输入正常刷新。
+    /// </summary>
+    private bool _restoringSearch;
 
     /// <summary>
     /// 搜索框（SearchOverlay）高度：紧凑输入框标准高度 32，居中于按钮高度区域。
@@ -490,6 +504,7 @@ public sealed partial class SortPage : Page
         bool hadKeyword = !string.IsNullOrEmpty(_searchKeyword);
         SearchBox.Text = "";
         _searchKeyword = "";
+        Plugin.Data.SearchKeyword = ""; // 清除持久化：下次重建不再恢复
         if (hadKeyword) RefreshFilter();
         ToggleSearchState(false);
         AnimateSearchWidth(0);
@@ -529,20 +544,23 @@ public sealed partial class SortPage : Page
         }
     }
 
-    /// <summary>Ctrl+F 展开搜索框（对齐原生 InlineSearchAutoSuggestBox 的快捷键）</summary>
-    private void OnCtrlF_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        ExpandSearch();
-        args.Handled = true;
-    }
-
     /// <summary>搜索框输入：实时过滤（复用宿主原生搜索语义）</summary>
     private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
         if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput &&
             args.Reason != AutoSuggestionBoxTextChangeReason.ProgrammaticChange)
             return;
+        if (_restoringSearch)
+        {
+            // 恢复场景：过滤器已由构造器在首次渲染前应用，跳过这次刷新（避免 GridView Reset 重绘闪烁）；
+            // 同时消费标记，保证之后的真实输入正常实时过滤
+            _restoringSearch = false;
+            _searchKeyword = sender.Text ?? "";
+            Plugin.Data.SearchKeyword = _searchKeyword;
+            return;
+        }
         _searchKeyword = sender.Text ?? "";
+        Plugin.Data.SearchKeyword = _searchKeyword; // 持久化：页面重建/切回后恢复（清空时置 "" = 手动删除）
         RefreshFilter();
     }
 
@@ -661,6 +679,27 @@ public sealed partial class SortPage : Page
         Range20To40.IsChecked = key == "20to40";
         RangeOver40.IsChecked = key == "Over40";
         RangeUnknown.IsChecked = key == "Unknown";
+    }
+
+    /// <summary>
+    /// 恢复持久化的搜索词（页面切走再切回/应用重启后搜索内容依然显示，直到用户手动删除）：
+    /// 有关键词 → 展开搜索框并显示文本；无则保持收起。
+    /// 只恢复显隐/文本，不主动抢焦点；<b>不在此处触发刷新</b>——过滤器由构造器在
+    /// 首次渲染前统一挂载（见构造器注释），避免切回时重复搜索导致画面闪烁。
+    /// </summary>
+    private void RestoreSearchState()
+    {
+        _searchKeyword = Plugin.Data.SearchKeyword ?? "";
+        if (string.IsNullOrEmpty(_searchKeyword)) return;
+        // 吸收恢复那一次 TextChanged：只记状态，不触发 RefreshFilter（构造器已预挂过滤器）
+        _restoringSearch = true;
+        SearchBox.Text = _searchKeyword;
+        _searchExpanded = true;
+        SearchOverlay.Height = SearchBoxHeight;
+        ToggleSearchState(true);
+        // 恢复场景直接铺开宽度（不播展开动画），避免切回时闪动
+        SearchOverlay.Width = 220;
+        Debug.WriteLine($"[LibraryPlus] 搜索词恢复: \"{_searchKeyword}\"");
     }
 
     /// <summary>更新左上角统计：显示当前可见（排除+区间生效后）数量</summary>
