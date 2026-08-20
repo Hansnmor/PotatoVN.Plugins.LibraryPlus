@@ -152,8 +152,11 @@ public class KungalPhraser : IGalInfoPhraser
             result.Tags = galgame.Tags;
         }
 
-        if (Fields.HasFlag(ScrapeFields.CnName) && !string.IsNullOrWhiteSpace(detail.Name?.ZhCn))
-            result.CnName = detail.Name.ZhCn;
+        // kungal v2 的 name 是展示名（多为中文，也可能为日/英文）；仅当中文时回写，防止覆盖已有中文名
+        if (Fields.HasFlag(ScrapeFields.CnName) &&
+            !string.IsNullOrWhiteSpace(detail.Name) &&
+            IsChinese(detail.Name))
+            result.CnName = detail.Name;
 
         if (Fields.HasFlag(ScrapeFields.Developer))
         {
@@ -452,7 +455,7 @@ public class KungalPhraser : IGalInfoPhraser
         {
             if (result[i].Target != null) continue;
             string? n1 = NormalizeName(kcs[i].Name);
-            string? n2 = NormalizeName(kcs[i].NameJa);
+            string? n2 = NormalizeName(kcs[i].NameOriginal) ?? NormalizeName(kcs[i].NameJa);
             string? n3 = null;
             var (_, bgmId) = ExtractLinkIds(kcs[i].Links);
             if (bgmId != null && int.TryParse(bgmId, out int b) && cnMap.TryGetValue(b, out string? cn))
@@ -572,11 +575,14 @@ public class KungalPhraser : IGalInfoPhraser
             if (byName is not { Items.Count: > 0 }) continue;
             foreach (KungalCard candidate in byName.Items.Take(3))
             {
-                string? candName = candidate.Name?.ZhCn ?? candidate.Name?.ZhTw ?? candidate.Name?.JaJp;
-                if (candName == null) continue;
-                if (IGalInfoPhraser.Similarity(candName, name!) >= 0.5 ||
-                    CharOverlap(candName, name!) >= 0.7)
-                    return candidate.Id;
+                // kungal v2：展示名（多为中文）+ 原名（多为日文）都参与匹配
+                foreach (string? candName in new[] { candidate.Name, candidate.NameOriginal })
+                {
+                    if (string.IsNullOrWhiteSpace(candName)) continue;
+                    if (IGalInfoPhraser.Similarity(candName, name!) >= 0.5 ||
+                        CharOverlap(candName, name!) >= 0.7)
+                        return candidate.Id;
+                }
             }
         }
 
@@ -603,15 +609,23 @@ public class KungalPhraser : IGalInfoPhraser
         else yield return "v" + id;
     }
 
-    /// <summary>简介取语言优先级：zh-cn → zh-tw → ja-jp → en-us</summary>
+    /// <summary>简介取语言优先级：zh-Hans/zh-cn → 其他 zh → ja → en（kungal v2 简介为 [lang,intro] 数组）</summary>
     private static string? PickIntroduction(KungalDetail detail)
     {
-        KungalLang? intro = detail.Introduction;
-        if (intro == null) return null;
-        foreach (string text in new[] { intro.ZhCn, intro.ZhTw, intro.JaJp, intro.EnUs })
-            if (!string.IsNullOrWhiteSpace(text))
-                return KungalClient.HtmlToText(text);
-        return null;
+        string? fallbackZh = null, fallbackJa = null, fallbackEn = null;
+        foreach (KungalDetailIntro it in detail.Introduction)
+        {
+            string lang = (it.Lang ?? "").ToLowerInvariant();
+            string text = it.Intro ?? "";
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            string clean = KungalClient.HtmlToText(text).Trim();
+            if (clean.Length == 0) continue;
+            if (lang.StartsWith("zh-hans") || lang == "zh-cn") return clean; // 简中优先
+            if (fallbackZh == null && lang.StartsWith("zh")) fallbackZh = clean; // 繁中等
+            else if (fallbackJa == null && lang.StartsWith("ja")) fallbackJa = clean;
+            else if (fallbackEn == null && lang.StartsWith("en")) fallbackEn = clean;
+        }
+        return fallbackZh ?? fallbackJa ?? fallbackEn;
     }
 
     /// <summary>

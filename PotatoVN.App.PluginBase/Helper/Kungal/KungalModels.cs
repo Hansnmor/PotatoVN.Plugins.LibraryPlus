@@ -11,20 +11,12 @@ internal class KungalEnvelope<T>
     [JsonPropertyName("data")] public T? Data { get; set; }
 }
 
-/// <summary>多语言名称/简介（缺的语言为空串）</summary>
-internal class KungalLang
-{
-    [JsonPropertyName("en-us")] public string EnUs { get; set; } = "";
-    [JsonPropertyName("ja-jp")] public string JaJp { get; set; } = "";
-    [JsonPropertyName("zh-cn")] public string ZhCn { get; set; } = "";
-    [JsonPropertyName("zh-tw")] public string ZhTw { get; set; } = "";
-}
-
-/// <summary>搜索返回的轻量卡片</summary>
+/// <summary>搜索返回的轻量卡片（kungal v2：name=展示名，name_original=原名/日文名）</summary>
 internal class KungalCard
 {
     [JsonPropertyName("id")] public int Id { get; set; }
-    [JsonPropertyName("name")] public KungalLang? Name { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("name_original")] public string? NameOriginal { get; set; }
 }
 
 internal class KungalSearchData
@@ -38,8 +30,9 @@ internal class KungalDetail
 {
     [JsonPropertyName("id")] public int Id { get; set; }
     [JsonPropertyName("vndb_id")] public string? VndbId { get; set; }
-    [JsonPropertyName("name")] public KungalLang? Name { get; set; }
-    [JsonPropertyName("introduction")] public KungalLang? Introduction { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("name_original")] public string? NameOriginal { get; set; }
+    [JsonPropertyName("introduction")] public List<KungalDetailIntro> Introduction { get; set; } = new();
     [JsonPropertyName("release_date")] public string? ReleaseDate { get; set; }
     [JsonPropertyName("tag")] public List<KungalTag> Tag { get; set; } = new();
     [JsonPropertyName("engine")] public List<KungalEngine> Engine { get; set; } = new();
@@ -47,6 +40,14 @@ internal class KungalDetail
     [JsonPropertyName("ratings")] public List<KungalRating> Ratings { get; set; } = new();
     [JsonPropertyName("characters")] public List<KungalCharCard> Characters { get; set; } = new();
     [JsonPropertyName("external_ratings")] public List<KungalExternalRating> ExternalRatings { get; set; } = new();
+}
+
+/// <summary>详情简介条目（lang 如 zh-Hans/ja/en；zh-Hans 多为自动机器翻译）</summary>
+internal class KungalDetailIntro
+{
+    [JsonPropertyName("lang")] public string? Lang { get; set; }
+    [JsonPropertyName("intro")] public string? Intro { get; set; }
+    [JsonPropertyName("machine")] public bool Machine { get; set; }
 }
 
 /// <summary>外部网站评分（kungal 聚合的 bangumi / vndb / erogamescape 评分）</summary>
@@ -74,6 +75,7 @@ internal class KungalCharacter
     [JsonPropertyName("id")] public int Id { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("name_ja")] public string? NameJa { get; set; }
+    [JsonPropertyName("name_original")] public string? NameOriginal { get; set; }
     [JsonPropertyName("image")] public string? Image { get; set; }
     [JsonPropertyName("figure")] public string? Figure { get; set; }
     [JsonPropertyName("intro")] public string? Intro { get; set; }
