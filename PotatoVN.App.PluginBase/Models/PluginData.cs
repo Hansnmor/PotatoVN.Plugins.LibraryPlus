@@ -78,6 +78,16 @@ public partial class PluginData : ObservableRecipient
     /// 注意：字典整体替换赋值才会触发持久化（集合内修改不触发 PropertyChanged）。
     /// </summary>
     [ObservableProperty] private Dictionary<string, RatingData> _ratingCache = new();
+
+    /// <summary>
+    /// 启动守卫开关（默认关）：试玩（短开未达阈值即退出）后自动把「上次游玩时间」还原成启动前的值，
+    /// 防止原生主页「最后游玩」排序被纯测试打开顶到最前。真玩够阈值不动任何数据；
+    /// 仅对累计总时长低于阈值的游戏生效，已玩进去的老游戏回访完全不受影响。
+    /// </summary>
+    [ObservableProperty] private bool _launchGuardEnabled = false;
+
+    /// <summary>守卫阈值（分钟）：既是试玩观察资格线（累计总时长低于它才受守卫管），也是本轮真玩达标线，默认 5</summary>
+    [ObservableProperty] private int _launchGuardThresholdMinutes = 5;
 }
 
 /// <summary>加权评分缓存条目（VNDB / bangumi 官方 API 采集）</summary>

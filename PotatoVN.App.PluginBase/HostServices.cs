@@ -299,4 +299,41 @@ internal static class HostServices
 
     /// <summary>宿主 GameParseType 枚举的 All 常量（int.MaxValue）</summary>
     private const int GameParseTypeAll = int.MaxValue;
+
+    private static Action<GalgameManager.Models.Galgame>? _galAddedSubscriber;
+
+    /// <summary>
+    /// 订阅宿主 GalgameCollectionService.GalgameAddedEvent（新游戏入库时触发，签名 Action&lt;Galgame&gt;）。
+    /// 启动守卫用它给后续新增的游戏补挂 GalPropertyChanged 监听。失败时静默。
+    /// </summary>
+    public static void SubscribeGalgameAdded(Action<GalgameManager.Models.Galgame> handler)
+    {
+        try
+        {
+            EventInfo? evt = ServiceType().GetEvent("GalgameAddedEvent");
+            if (evt is null) return;
+            evt.AddEventHandler(Service, handler);
+            _galAddedSubscriber = handler;
+        }
+        catch
+        {
+            // 静默：新增游戏暂不被守卫观察，重启插件后恢复全覆盖
+        }
+    }
+
+    /// <summary>退订宿主 GalgameAddedEvent</summary>
+    public static void UnsubscribeGalgameAdded()
+    {
+        try
+        {
+            if (_galAddedSubscriber is null) return;
+            EventInfo? evt = ServiceType().GetEvent("GalgameAddedEvent");
+            evt?.RemoveEventHandler(Service, _galAddedSubscriber);
+            _galAddedSubscriber = null;
+        }
+        catch
+        {
+            // 静默
+        }
+    }
 }

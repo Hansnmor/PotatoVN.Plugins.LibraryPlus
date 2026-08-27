@@ -182,6 +182,41 @@
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE735;" />
                 </AppBarButton.Icon>
             </AppBarButton>
+            <!-- 游玩记录工具：启动守卫（试玩不上原生页前排）+ 清除记录。
+                 ToggleMenuFlyoutItem/RadioMenuFlyoutItem 的选中态一律代码设置（Opening 同步），XAML 不写字面量 -->
+            <AppBarButton x:Name="RecordToolButton" Label="记录" ToolTipService.ToolTip="游玩记录：试玩守卫与清除记录">
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" />
+                </AppBarButton.Icon>
+                <AppBarButton.Flyout>
+                    <MenuFlyout Opening="RecordMenu_Opening">
+                        <ToggleMenuFlyoutItem x:Name="GuardToggleItem" Text="启动守卫（试玩不上前排）"
+                                              Click="GuardToggle_Click"
+                                              ToolTipService.ToolTip="短开游戏未达阈值即退出时，自动还原「上次游玩时间」，防止原生主页排序被污染" />
+                        <MenuFlyoutSubItem Text="守卫阈值（真玩达标才放行）">
+                            <RadioMenuFlyoutItem x:Name="GuardThreshold5" Text="5 分钟（默认）" Tag="5"
+                                                 GroupName="GuardThreshold" Click="GuardThreshold_Click" />
+                            <RadioMenuFlyoutItem x:Name="GuardThreshold10" Text="10 分钟" Tag="10"
+                                                 GroupName="GuardThreshold" Click="GuardThreshold_Click" />
+                            <RadioMenuFlyoutItem x:Name="GuardThreshold15" Text="15 分钟" Tag="15"
+                                                 GroupName="GuardThreshold" Click="GuardThreshold_Click" />
+                            <RadioMenuFlyoutItem x:Name="GuardThreshold20" Text="20 分钟" Tag="20"
+                                                 GroupName="GuardThreshold" Click="GuardThreshold_Click" />
+                            <RadioMenuFlyoutItem x:Name="GuardThreshold30" Text="30 分钟" Tag="30"
+                                                 GroupName="GuardThreshold" Click="GuardThreshold_Click" />
+                            <RadioMenuFlyoutItem x:Name="GuardThreshold60" Text="60 分钟" Tag="60"
+                                                 GroupName="GuardThreshold" Click="GuardThreshold_Click" />
+                        </MenuFlyoutSubItem>
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Text="清除游玩记录…" Click="ClearPlayRecord_Click"
+                                        ToolTipService.ToolTip="清除勾选（或当前筛选）游戏的游玩明细/累计时长/上次游玩时间" />
+                        <MenuFlyoutItem Text="导出插件数据…" Click="ExportData_Click"
+                                        ToolTipService.ToolTip="把本插件的设置、手动分类覆盖、搜刮与评分缓存导出为 JSON 备份（防误删）" />
+                        <MenuFlyoutItem Text="导入插件数据…" Click="ImportData_Click"
+                                        ToolTipService.ToolTip="从导出的 JSON 备份整体恢复插件数据（覆盖当前，需确认）" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
             <CommandBar.Content>
                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock x:Name="CountTextBlock" VerticalAlignment="Center"

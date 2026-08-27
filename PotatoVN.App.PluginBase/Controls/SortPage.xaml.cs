@@ -789,6 +789,13 @@ public sealed partial class SortPage : Page
 · 右键游戏 → 分类 / 形态，可手动指定（多选勾选时批量应用）
 · 手动设定优先于自动分类，持久化生效
 
+【游玩记录】
+· 启动守卫（默认关闭，在 记录 菜单开启）：只点开测试、本轮未达阈值就退出的新游戏，自动还原「上次游玩时间」，不再顶到原生主页「最后游玩」排序最前
+· 仅对累计总时长低于阈值的游戏生效（默认 5 分钟）——已玩进去的老游戏回访完全不受影响
+· 判定零等待：退出游戏时立即结算，试玩即归位、真玩不动任何数据；守卫只改时间戳，不删游玩时长
+· Steam 库游戏不参与守卫（Steam 时间是官方统计，无污染）
+· 清除记录：把勾选（或当前筛选）游戏的逐日游玩明细、累计时长、上次游玩时间清零（可选连次数一起），不可撤销
+
 【数据与提示】
 · 搜刮数据本地持久化（随软件数据目录，随插件卸载可清）
 · 建议 kungal 搜刮放在混合搜刮之后（混合搜刮会覆盖标签）
@@ -806,6 +813,197 @@ public sealed partial class SortPage : Page
         };
         await dialog.ShowAsync();
     }
+
+    #region 游玩记录（启动守卫 + 清除记录）
+
+    /// <summary>菜单打开时同步守卫开关/阈值的选中态（XAML 不写 IsChecked 字面量的既定约束）</summary>
+    private void RecordMenu_Opening(object sender, object e)
+    {
+        try
+        {
+            GuardToggleItem.IsChecked = Plugin.Data.LaunchGuardEnabled;
+            foreach (RadioMenuFlyoutItem item in new[]
+                     { GuardThreshold5, GuardThreshold10, GuardThreshold15, GuardThreshold20, GuardThreshold30, GuardThreshold60 })
+                item.IsChecked = int.TryParse(item.Tag as string, out int v)
+                                 && v == Plugin.Data.LaunchGuardThresholdMinutes;
+        }
+        catch
+        {
+            // 页面销毁中，忽略
+        }
+    }
+
+    private void GuardToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleMenuFlyoutItem t) return; // Click 在状态翻转后触发，直接读当前值
+        Plugin.Data.LaunchGuardEnabled = t.IsChecked;     // ObservableProperty 自动持久化
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: t.IsChecked
+                ? $"启动守卫已开启：短开未达 {Plugin.Data.LaunchGuardThresholdMinutes} 分钟的游戏不再顶到原生主页「最后游玩」最前"
+                : "启动守卫已关闭，恢复原生行为");
+    }
+
+    private void GuardThreshold_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string s } || !int.TryParse(s, out int minutes)) return;
+        Plugin.Data.LaunchGuardThresholdMinutes = Math.Max(1, minutes);
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: $"守卫阈值已设为 {minutes} 分钟：本轮真实游玩累计达到该时长才认定为「真玩了」");
+    }
+
+    /// <summary>
+    /// 清除游玩记录：对勾选集（多选模式）或当前筛选集，清空 PlayedTime / 累计时长 / 上次游玩时间，
+    /// 可选连 PlayCount 一起清零。不可撤销，确认框二次把关；清完同步通知守卫丢弃相关观察状态。
+    /// </summary>
+    private async void ClearPlayRecord_Click(object sender, RoutedEventArgs e)
+    {
+        List<Galgame> games = GetBatchTargets();
+        bool isSelected = games.Count > 0 &&
+                          GameGridView.SelectionMode == ListViewSelectionMode.Multiple;
+        if (!isSelected) games = _source.OfType<Galgame>().ToList(); // 非多选 = 当前筛选可见集
+        if (games.Count == 0)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "当前筛选下没有游戏");
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+            Title = "清除游玩记录",
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"将清除{(isSelected ? "选中的" : "当前筛选的")} {games.Count} 款游戏的游玩数据：\n" +
+                               "· 游玩时长明细（逐日记录）全部删除\n" +
+                               "· 累计游玩时长、上次游玩时间归零\n" +
+                               "· 我的评分、游玩状态、分类等其它数据不受影响\n\n" +
+                               "此操作不可撤销！注意：Steam 库游戏会被 Steam 数据重新覆盖；" +
+                               "若宿主开启了 PVN 云同步，云端旧记录可能在下次同步时合并回来。",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new CheckBox
+                    {
+                        Content = "同时清零游玩次数（PlayCount）",
+                        IsChecked = false, // 代码创建的控件可以直接写
+                    },
+                },
+            },
+            PrimaryButtonText = "开始清除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        bool clearCount = (dialog.Content as StackPanel)?.Children
+            .OfType<CheckBox>().FirstOrDefault()?.IsChecked == true;
+
+        int ok = 0, fail = 0;
+        foreach (Galgame game in games)
+        {
+            try
+            {
+                LaunchGuardHelper.OnRecordsCleared(new[] { game }); // 先丢守卫状态，避免清零动作被守卫盯上
+                game.PlayedTime.Clear();
+                game.TotalPlayTime = 0;
+                game.LastPlayTime = DateTime.MinValue;
+                if (clearCount) game.PlayCount = 0;
+                await HostServices.SaveGameAsync(game);
+                ok++;
+            }
+            catch (Exception ex)
+            {
+                fail++;
+                Plugin.HostApi.Log(InfoBarSeverity.Warning, $"清除记录失败 {game.Name.Value}: {ex.Message}");
+            }
+        }
+
+        // 与「更多搜刮 / 计算评分 / 批量改分类」行为对齐：批量完成后自动退出多选（清空勾选集）
+        try { if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple) ExitMultiSelect(); }
+        catch { /* 页面销毁 */ }
+
+        Plugin.HostApi.Info(InfoBarSeverity.Informational, title: "清除完成",
+            msg: $"{ok}/{games.Count} 款游戏游玩记录已清零" +
+                 (fail > 0 ? $"，失败 {fail} 款（详见插件日志）" : ""));
+    }
+
+    #endregion
+
+    #region 插件数据导出/导入
+
+    private async void ExportData_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string? path = await PluginDataIoHelper.ExportAsync();
+            if (path is not null)
+                Plugin.HostApi.Info(InfoBarSeverity.Informational, title: "导出完成",
+                    msg: $"插件数据已备份到：{path}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Error, title: "导出失败", msg: ex.Message);
+        }
+    }
+
+    private async void ImportData_Click(object sender, RoutedEventArgs e)
+    {
+        PluginData? data;
+        try
+        {
+            data = await PluginDataIoHelper.ImportAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Error, title: "导入失败",
+                msg: $"所选文件不是本插件的有效备份：{ex.Message}");
+            return;
+        }
+        catch (Exception ex)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Error, title: "导入失败", msg: ex.Message);
+            return;
+        }
+        if (data is null) return; // 用户取消了文件选择，静默
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+            Title = "导入插件数据",
+            Content = new TextBlock
+            {
+                Text = "将用备份整体覆盖当前全部插件数据：\n" +
+                       "· 页面设置（排序/筛选/搜索）\n" +
+                       "· 手动分类/形态覆盖\n" +
+                       "· kungal / Bangumi 搜刮缓存与加权评分缓存\n" +
+                       "· 启动守卫设置\n\n覆盖后立即生效并持久化，当前数据将丢失。",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "覆盖",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        Plugin.ReplaceData(data);
+
+        // 重放页面恢复序列，让排序/筛选/搜索状态立即反映新数据（不重启软件）
+        ApplySort();
+        RestoreSortMenuState();
+        RestoreRangeState();
+        RestoreCategoryState();
+        RestoreFormState();
+        SyncFilterCheckBoxes();
+        RestoreSearchState();
+        RefreshFilter();
+
+        Plugin.HostApi.Info(InfoBarSeverity.Informational, title: "导入完成", msg: "插件数据已替换并持久化");
+    }
+
+    #endregion
 
     #region 批量搜刮（kungal）
 
