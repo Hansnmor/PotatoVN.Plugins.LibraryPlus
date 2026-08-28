@@ -182,14 +182,18 @@
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE735;" />
                 </AppBarButton.Icon>
             </AppBarButton>
-            <!-- 游玩记录工具：启动守卫（试玩不上原生页前排）+ 清除记录。
+            <!-- 更多工具：显示设置（非本地游戏）+ 游玩记录（启动守卫/清除记录）+ 插件数据备份。
                  ToggleMenuFlyoutItem/RadioMenuFlyoutItem 的选中态一律代码设置（Opening 同步），XAML 不写字面量 -->
-            <AppBarButton x:Name="RecordToolButton" Label="记录" ToolTipService.ToolTip="游玩记录：试玩守卫与清除记录">
+            <AppBarButton x:Name="MoreToolButton" Label="更多" ToolTipService.ToolTip="显示设置、游玩记录工具与插件数据备份">
                 <AppBarButton.Icon>
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" />
                 </AppBarButton.Icon>
                 <AppBarButton.Flyout>
-                    <MenuFlyout Opening="RecordMenu_Opening">
+                    <MenuFlyout Opening="MoreMenu_Opening">
+                        <ToggleMenuFlyoutItem x:Name="ShowVirtualGameItem" Text="显示非本地游戏"
+                                              Click="ShowVirtualGame_Click"
+                                              ToolTipService.ToolTip="库里有条目、但本机已没有游戏文件的记录（云同步换机后常见，原生称「虚拟游戏」）。默认不显示，也不参与统计与批量操作" />
+                        <MenuFlyoutSeparator />
                         <ToggleMenuFlyoutItem x:Name="GuardToggleItem" Text="启动守卫（试玩不上前排）"
                                               Click="GuardToggle_Click"
                                               ToolTipService.ToolTip="短开游戏未达阈值即退出时，自动还原「上次游玩时间」，防止原生主页排序被污染" />

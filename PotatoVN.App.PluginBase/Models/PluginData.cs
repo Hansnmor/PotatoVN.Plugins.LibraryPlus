@@ -88,6 +88,13 @@ public partial class PluginData : ObservableRecipient
 
     /// <summary>守卫阈值（分钟）：既是试玩观察资格线（累计总时长低于它才受守卫管），也是本轮真玩达标线，默认 5</summary>
     [ObservableProperty] private int _launchGuardThresholdMinutes = 5;
+
+    /// <summary>
+    /// 扩展库页是否显示「非本地游戏」（原生称「虚拟游戏」：库里有条目但本机没有任何
+    /// 本地文件夹/Steam 源——换机后经云同步只恢复元数据的记录即属此类）。默认不显示，
+    /// 与原生游戏页 VirtualGameFilter 的默认行为对齐；关闭时这些条目不进列表/统计/批量操作。
+    /// </summary>
+    [ObservableProperty] private bool _displayVirtualGame = false;
 }
 
 /// <summary>加权评分缓存条目（VNDB / bangumi 官方 API 采集）</summary>

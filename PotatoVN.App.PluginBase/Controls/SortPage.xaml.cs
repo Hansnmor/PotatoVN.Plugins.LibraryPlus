@@ -380,9 +380,18 @@ public sealed partial class SortPage : Page
         }
     }
 
+    /// <summary>
+    /// 非本地游戏（虚拟游戏）是否可见：「显示非本地游戏」开关统一口径。
+    /// FilterGame 与完成度统计共用——两处口径不一致会出现"总时长跟着开关变、完成度不变"。
+    /// </summary>
+    private bool VirtualGameVisible(Galgame game) => Plugin.Data.DisplayVirtualGame || game.IsLocalGame;
+
     private bool FilterGame(object? obj)
     {
         if (obj is not Galgame game) return false;
+        // 非本地游戏（虚拟游戏）默认隐藏：与原生游戏页 VirtualGameFilter 默认行为对齐，
+        // 挡住云同步换机后只恢复元数据的「幽灵条目」（开启「显示非本地游戏」后放行）
+        if (!VirtualGameVisible(game)) return false;
         if (!SearchHelper.ApplySearchKey(game, _searchKeyword)) return false;
         if (!MatchesPlayTypeFilter(game)) return false;
         if (!MatchesCategory(game)) return false;
@@ -733,11 +742,13 @@ public sealed partial class SortPage : Page
         }
         TotalTimeText.Text = $"待玩总时长：{ExpectedPlayTimeHelper.FormatHours(totalMinutes)}";
 
-        // 完成度：左侧三个筛选全「全部」→ 全局；否则按三筛选条件（时长/内容/形态，不含状态筛选）的子集统计
+        // 完成度：左侧三个筛选全「全部」→ 全局；否则按三筛选条件（时长/内容/形态，不含状态筛选）的子集统计。
+        // 从未过滤源出发是原设计（刻意绕开状态筛选与搜索词），但「显示非本地游戏」开关必须同样生效，
+        // 与待玩总时长/时长未知（走过滤后视图）口径一致
         bool isGlobal = Plugin.Data.RangeKey == RangeKeyAll &&
                         Plugin.Data.CategoryKey == CategoryKeyAll &&
                         Plugin.Data.FormKey == CategoryKeyAll;
-        IEnumerable<Galgame> progressSet = _source.Source.OfType<Galgame>();
+        IEnumerable<Galgame> progressSet = _source.Source.OfType<Galgame>().Where(VirtualGameVisible);
         if (!isGlobal)
             progressSet = progressSet.Where(g => MatchesRange(g) && MatchesCategory(g) && MatchesForm(g));
         int played = progressSet.Count(g => g.PlayType == PlayType.Played);
@@ -814,13 +825,14 @@ public sealed partial class SortPage : Page
         await dialog.ShowAsync();
     }
 
-    #region 游玩记录（启动守卫 + 清除记录）
+    #region 更多菜单（显示设置 + 游玩记录）
 
-    /// <summary>菜单打开时同步守卫开关/阈值的选中态（XAML 不写 IsChecked 字面量的既定约束）</summary>
-    private void RecordMenu_Opening(object sender, object e)
+    /// <summary>菜单打开时同步显示开关/守卫开关/阈值的选中态（XAML 不写 IsChecked 字面量的既定约束）</summary>
+    private void MoreMenu_Opening(object sender, object e)
     {
         try
         {
+            ShowVirtualGameItem.IsChecked = Plugin.Data.DisplayVirtualGame;
             GuardToggleItem.IsChecked = Plugin.Data.LaunchGuardEnabled;
             foreach (RadioMenuFlyoutItem item in new[]
                      { GuardThreshold5, GuardThreshold10, GuardThreshold15, GuardThreshold20, GuardThreshold30, GuardThreshold60 })
@@ -831,6 +843,18 @@ public sealed partial class SortPage : Page
         {
             // 页面销毁中，忽略
         }
+    }
+
+    private void ShowVirtualGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleMenuFlyoutItem t) return; // Click 在状态翻转后触发，直接读当前值
+        Plugin.Data.DisplayVirtualGame = t.IsChecked;     // ObservableProperty 自动持久化
+        RefreshFilter();
+        int count = Plugin.HostApi.GetAllGames().Count(g => !g.IsLocalGame);
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: t.IsChecked
+                ? $"已显示非本地游戏：本机无游戏文件的条目共 {count} 款，恢复显示（批量操作也会包含它们）"
+                : $"已隐藏非本地游戏（共 {count} 款），与原生游戏页默认行为一致");
     }
 
     private void GuardToggle_Click(object sender, RoutedEventArgs e)

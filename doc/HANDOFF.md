@@ -1,7 +1,7 @@
 # LibraryPlus 插件接手开发指南（HANDOFF）
 
 > 本文档面向**新接手的 AI**：读这一篇就能一条龙走完「理解项目 → 开发 → 构建调试 → 提交 → 发布」。
-> 当前版本：v1.4.2。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
+> 当前版本：v1.4.3。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
 
 ---
 
@@ -79,12 +79,22 @@
 
 ### 3.5 游玩记录：启动守卫 + 清除工具（v1.4.2）
 - **启动守卫**（`Helper/LaunchGuardHelper.cs`，默认关闭、阈值默认 5 分钟）：防「点开测试几秒」的游戏顶到原生主页「最后游玩」排序最前。判定链：宿主 Messenger 钩子（`GalgamePlayedMessage`/`GalgameStoppedMessage`，WeakReferenceMessenger，挂载前校验与宿主同一实例）→ 收到停止消息立即结算；兜底为 30 秒轮询双通道活性（`TotalPlayTime` 每分钟滴答 + 进程探测）+ 2 分钟安静宽限期（宿主源码实证：进程探测不可靠，未配置 ProcessName/exe 改名时永远探不到）。**累计总时长 ≥ 阈值的游戏完全豁免**（老游戏回访不受影响）。试玩仅还原 `LastPlayTime` 时间戳并弹 InfoBar 说明，不删任何游玩时长。Steam 源不守卫。
-- **清除游玩记录**（SortPage「记录」菜单）：清空勾选/筛选集的 PlayedTime 明细 + 累计时长 + 上次游玩时间，可选连 PlayCount；确认框警示不可逆与 Steam 覆盖/云同步合并风险；完成自动退出多选。
+- **清除游玩记录**（SortPage「更多」菜单）：清空勾选/筛选集的 PlayedTime 明细 + 累计时长 + 上次游玩时间，可选连 PlayCount；确认框警示不可逆与 Steam 覆盖/云同步合并风险；完成自动退出多选。
 - 宿主关键事实（排障必读）：启动游戏时宿主无条件 `LastPlayTime = DateTime.Now`；`TotalPlayTime/LastPlayTime` 由 `PlayedTime` 字典派生（`MergeTime` 为 max 合并**只增不减**）；「重启后删除的记录复活」渠道 = PVN 云同步 pull（编辑游玩时长页的保存**无条件**触发同步任务，不检查同步开关）/ Steam 刷新覆盖 / `.PotatoVN\meta.json` 备份重新入库合并。
 
 ### 3.6 插件数据导出/导入（v1.4.2）
 - `Helper/PluginDataIoHelper.cs`：PluginData 整体备份为带标识头的 JSON（app 标记 + schema 版本 + 时间戳），含页面设置、手动分类/形态覆盖、搜刮与评分缓存、守卫配置。导入校验标识与版本（不符明确拒绝），确认后 `Plugin.ReplaceData` 热替换并持久化，页面状态即时重放刷新。
 - 动机：卸载勾选「删除数据」= 直接删 `plugin_data` 集合中本插件 Guid 那条记录，不可恢复。
+
+### 3.7 非本地游戏过滤（「更多」菜单显示开关，v1.4.3）
+- **「显示非本地游戏」**（`PluginData.DisplayVirtualGame`，默认关）：非本地游戏 = 库里有条目但本机无任何
+  本地文件夹/Steam 源（`Galgame.IsLocalGame == false`，宿主称「虚拟游戏」）——云同步换机后只恢复元数据的
+  记录即属此类。默认隐藏，与原生游戏页 `VirtualGameFilter` 默认行为对齐。
+- 统一口径：`SortPage.VirtualGameVisible()` 同时用于 `FilterGame` 与完成度统计——口径不一致会出现
+  「待玩总时长跟着开关变、完成度不变」。完成度原有语义保留（从未过滤源出发，绕开状态筛选与搜索词），
+  只是叠加了本开关。
+- 原「记录」按钮改名「更多」（`MoreToolButton`，菜单 Opening 处理器同步改名 `MoreMenu_Opening`），
+  收纳显示开关、游玩记录工具与插件数据备份。
 
 ---
 
@@ -117,7 +127,7 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
    - `CommandBarLabelPosition` 枚举只有 Default/Collapsed（宿主 WinUI 较旧）。
 3. **不能使用 `DispatcherQueue`**（宿主 WinUI 太旧会 MissingMethodException）；跨线程回 UI 用 `Plugin.HostApi.InvokeOnMainThread`。
 4. **XAML 中别用 `IsChecked` 字面量**（旧 WinUI XamlParseException）；图标用 `FontIcon Glyph`（Symbol 枚举可能缺成员）。
-5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.4.2），与 GitHub tag 对齐。
+5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.4.3），与 GitHub tag 对齐。
 6. 搜刮器/评分 API 细节（VNDB 匿名 POST、Bangumi v1 匿名可拿 R18、host token 经 `HostServices.GetBgmTokenAsync()`）见对应 Helper 文件头注释。
 7. **kungal API v2 破坏性变更（已适配，勿回退）**：搜索/详情接口的 `name` 现在都是普通字符串（不再是 `{en-us,ja-jp,zh-cn,zh-tw}` 多语言对象），新增 `name_original`（原名/日文名）；详情 `introduction` 是 `[{lang,intro,machine}]` 数组（不再是多语言对象）。`KungalModels.cs` 里 `KungalCard.Name`、`KungalDetail.Name/NameOriginal/Introduction` 已按新结构建模（`KungalLang` 已移除）。若再遇「所有游戏批量搜刮都未匹配」，优先怀疑 kungal 接口又改了结构（用 curl 打 `/api/search`、`/api/galgame/{gid}` 实测比对）。
 
