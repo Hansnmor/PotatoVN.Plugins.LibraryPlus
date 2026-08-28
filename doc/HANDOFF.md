@@ -186,6 +186,11 @@ curl.exe -s -X POST -H "Authorization: Bearer $tok" -H "Accept: application/vnd.
 ```
 
 - release 命名规范（历史）：name = tag = `vX.Y.Z`，资产名固定 `plugin.pvnplugin.zip`。
+- **上传后必须校验资产字节**：响应 JSON 的 `size` 必须等于本地 zip 大小，发布前再下载回来比对 SHA-256。
+  v1.4.3（2026-08-29）实测踩坑：本机网络环境下 `curl -F` 的 multipart 会被 uploads.github.com **原样落盘**
+  （资产外多包一层约 215 字节的表单边界/头，zip 表面能打开但非原样字节，手工构造 multipart 也一样）。
+  **必胜方案是裸字节上传**——不带任何表单包装，服务器无论解析与否，存的都是文件本身：
+  `curl -X POST -H "Authorization: Bearer $tok" -H "Content-Type: application/zip" -H "Expect:" --data-binary @plugin.pvnplugin.zip "https://uploads.github.com/.../assets?name=plugin.pvnplugin.zip"`
 - 发布后清理：删除临时 token 文件与 JSON 载荷文件。
 - 验证：访问 release 页面确认 zip 资产可见、大小正常。
 
