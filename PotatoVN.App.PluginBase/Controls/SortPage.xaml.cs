@@ -1578,10 +1578,27 @@ public sealed partial class SortPage : Page
         _ = HostServices.SaveGameAsync(game);
     }
 
+    /// <summary>待执行的编辑导航（EditGame_Click 设置，Flyout 彻底关闭后消费）</summary>
+    private Galgame? _pendingEditNavGame;
+
     private void EditGame_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentGame is null) return;
-        Plugin.HostApi.NavigateTo(PageEnum.GalgameSettingPage, _currentGame);
+        if (_currentGame is not { } game) return;
+        // 右键菜单的点击处理期间（乃至菜单关闭动画阶段）同步构建编辑页会病态膨胀到 ~3000ms，
+        // 排队下一拍（InvokeOnMainThread/TryEnqueue）也躲不开；而左键 ItemClick 同一页面仅 100-200ms
+        // （A/B 实测）。唯一可靠的时机是 MenuFlyout.Closed（菜单彻底关闭）之后再排一拍执行导航。
+        // 宿主原生 HomeViewModel.GalFlyOutEdit 也有同款"延迟导航"处理并注明修复文字渲染问题。
+        _pendingEditNavGame = game;
+        GameFlyout.Closed += EditNav_FlyoutClosed;
+    }
+
+    private void EditNav_FlyoutClosed(object sender, object args)
+    {
+        GameFlyout.Closed -= EditNav_FlyoutClosed;
+        if (_pendingEditNavGame is not { } game) return;
+        _pendingEditNavGame = null;
+        Plugin.HostApi.InvokeOnMainThread(() =>
+            Plugin.HostApi.NavigateTo(PageEnum.GalgameSettingPage, game));
     }
 
     private async void FetchInfo_Click(object sender, RoutedEventArgs e)

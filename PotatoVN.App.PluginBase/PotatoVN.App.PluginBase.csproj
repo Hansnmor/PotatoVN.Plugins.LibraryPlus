@@ -11,7 +11,7 @@
     <!--命名规则A{id}，与插件Id一致，避免和其他插件冲突-->
     <AssemblyName>A70ee3f8a-361a-450a-acff-5371e85808b4</AssemblyName>
     <!-- 插件版本（对齐 GitHub release tag） -->
-    <Version>1.4.3</Version>
+    <Version>1.4.4</Version>
     <!-- 要处理该警告需要用到.Net Preview的特性，等特性稳定（进入正式版）后再处理 -->
     <NoWarn>MVVMTK0045</NoWarn>
   </PropertyGroup>
