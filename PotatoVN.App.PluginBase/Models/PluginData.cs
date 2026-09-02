@@ -95,6 +95,31 @@ public partial class PluginData : ObservableRecipient
     /// 与原生游戏页 VirtualGameFilter 的默认行为对齐；关闭时这些条目不进列表/统计/批量操作。
     /// </summary>
     [ObservableProperty] private bool _displayVirtualGame = false;
+
+    /// <summary>
+    /// 音量规范化开关（默认关）：galgame 大多默认音量过大，首次启动时把该游戏进程的
+    /// Windows 应用会话音量压到 <see cref="VolumeNormalizeLevel"/> 档位。压过一次后写入
+    /// <see cref="VolumeNormalizedGames"/> 不再改动（尊重用户后续手动调整）。关闭恢复原生行为。
+    /// 默认关闭：属用户主动启用型功能，避免未经同意改用户音量。
+    /// </summary>
+    [ObservableProperty] private bool _volumeNormalizeEnabled = false;
+
+    /// <summary>音量规范化目标档位（0..1，默认 0.30 = 30%）；加到应用会话音量档位</summary>
+    [ObservableProperty] private float _volumeNormalizeLevel = 0.30f;
+
+    /// <summary>
+    /// 已压过音量的游戏 uuid（「仅首次」标记）。注意：字典/集合整体替换赋值才会触发持久化
+    /// （集合内修改不触发 PropertyChanged）；成功压过一次后整体覆盖写入。
+    /// </summary>
+    [ObservableProperty] private HashSet<string> _volumeNormalizedGames = new();
+
+    /// <summary>
+    /// 压音量时记录的进程 exe 路径快照（uuid → exe 路径）：用于检测「游戏移动位置后 Windows 把
+    /// 应用音量重置回 100%」。启动时实际进程 exe 路径与记录不同 → 说明移动过 → 重新压一次并更新记录；
+    /// 相同 → 没移动，跳过（尊重用户手动调整）。仅有 <see cref="VolumeNormalizedGames"/> 而无此条目的
+    /// 旧记录视为路径未知：下次启动补压一次以记录路径（幂等，无害）。
+    /// </summary>
+    [ObservableProperty] private Dictionary<string, string> _volumeNormalizedPaths = new();
 }
 
 /// <summary>加权评分缓存条目（VNDB / bangumi 官方 API 采集）</summary>

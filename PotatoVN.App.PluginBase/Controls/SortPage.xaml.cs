@@ -838,6 +838,15 @@ public sealed partial class SortPage : Page
                      { GuardThreshold5, GuardThreshold10, GuardThreshold15, GuardThreshold20, GuardThreshold30, GuardThreshold60 })
                 item.IsChecked = int.TryParse(item.Tag as string, out int v)
                                  && v == Plugin.Data.LaunchGuardThresholdMinutes;
+            VolumeNormalizeToggleItem.IsChecked = Plugin.Data.VolumeNormalizeEnabled;
+            foreach (RadioMenuFlyoutItem item in new[]
+                     { VolumeLevel10, VolumeLevel20, VolumeLevel30, VolumeLevel40, VolumeLevel50,
+                       VolumeLevel60, VolumeLevel70, VolumeLevel80, VolumeLevel90, VolumeLevel100 })
+            {
+                float? f = TryParseFloatTag(item);
+                item.IsChecked = f.HasValue &&
+                                 Math.Abs(f.Value - Plugin.Data.VolumeNormalizeLevel) < 0.001f;
+            }
         }
         catch
         {
@@ -873,6 +882,51 @@ public sealed partial class SortPage : Page
         Plugin.Data.LaunchGuardThresholdMinutes = Math.Max(1, minutes);
         Plugin.HostApi.Info(InfoBarSeverity.Informational,
             msg: $"守卫阈值已设为 {minutes} 分钟：本轮真实游玩累计达到该时长才认定为「真玩了」");
+    }
+
+    /// <summary>音量规范化开关：首次启动把游戏的应用会话音量压到设定档位，压过就不再改动</summary>
+    private void VolumeNormalizeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleMenuFlyoutItem t) return; // Click 在状态翻转后触发，直接读当前值
+        Plugin.Data.VolumeNormalizeEnabled = t.IsChecked; // ObservableProperty 自动持久化
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: t.IsChecked
+                ? $"音量规范化已开启：首次启动游戏时把它压到 {Plugin.Data.VolumeNormalizeLevel * 100:0}%（每款只压一次，之后尊重你的手动调整）"
+                : "音量规范化已关闭，恢复原生音量行为");
+    }
+
+    /// <summary>音量规范化档位选择</summary>
+    private void VolumeLevel_Click(object sender, RoutedEventArgs e)
+    {
+        float? level = TryParseFloatTag(sender as FrameworkElement);
+        if (!level.HasValue) return;
+        Plugin.Data.VolumeNormalizeLevel = Math.Clamp(level.Value, 0f, 1f);
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: $"规范化音量设为 {Plugin.Data.VolumeNormalizeLevel * 100:0}%");
+    }
+
+    /// <summary>清空音量规范化「已压过」记录：下次启动游戏时重新压一次（换设备/测试用）</summary>
+    private void VolumeResetRecords_Click(object sender, RoutedEventArgs e)
+    {
+        Helper.VolumeNormalizer.ResetRecords();
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: $"已清空音量规范化记录：下次启动游戏时会重新压到 {Plugin.Data.VolumeNormalizeLevel * 100:0}%");
+    }
+
+    /// <summary>清空单款游戏的音量规范化记录（右键菜单）：该游戏下次启动时重新压一次</summary>
+    private void ResetVolumeRecord_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentGame is not { } game) return;
+        Helper.VolumeNormalizer.ResetRecord(game.Uuid);
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: $"已清空《{game.Name.Value}》的音量规范化记录：下次启动时会重新把应用音量压到 {Plugin.Data.VolumeNormalizeLevel * 100:0}%");
+    }
+
+    /// <summary>把 RadioMenuFlyoutItem.Tag（float 字符串）解析成浮点；解析失败返回 null</summary>
+    private static float? TryParseFloatTag(FrameworkElement? item)
+    {
+        return item is { Tag: string s } && float.TryParse(s,
+            System.Globalization.CultureInfo.InvariantCulture, out float f) ? f : null;
     }
 
     /// <summary>

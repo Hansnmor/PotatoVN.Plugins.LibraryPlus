@@ -56,6 +56,8 @@
             </MenuFlyoutSubItem>
             <MenuFlyoutItem Icon="Edit" Text="编辑游戏信息" Click="EditGame_Click" />
             <MenuFlyoutItem Icon="Download" Text="下载游戏信息" Click="FetchInfo_Click" />
+            <MenuFlyoutItem Icon="Refresh" Text="清空音量规范化记录" Click="ResetVolumeRecord_Click"
+                            ToolTipService.ToolTip="清空该游戏的「已压过」标记：下次启动时重新把应用音量压到设定档位（适合改了音量档位后想重新压制）" />
             <MenuFlyoutItem Icon="OpenLocal" Text="在文件管理器中打开" x:Name="OpenInExplorerItem" Click="OpenInExplorer_Click" />
             <MenuFlyoutItem Icon="Delete" Text="从游戏库删除" Click="RemoveGame_Click" />
         </MenuFlyout>
@@ -211,6 +213,34 @@
                             <RadioMenuFlyoutItem x:Name="GuardThreshold60" Text="60 分钟" Tag="60"
                                                  GroupName="GuardThreshold" Click="GuardThreshold_Click" />
                         </MenuFlyoutSubItem>
+                        <MenuFlyoutSeparator />
+                        <ToggleMenuFlyoutItem x:Name="VolumeNormalizeToggleItem" Text="音量规范化（首次启动压到档位）"
+                                              Click="VolumeNormalizeToggle_Click"
+                                              ToolTipService.ToolTip="galgame 默认音量过大：首次启动时把该游戏进程的 Windows 应用会话音量压到设定档位；压过就不再改动，尊重你的手动调整" />
+                        <MenuFlyoutSubItem Text="规范化音量档位">
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel10" Text="10%" Tag="0.10"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel20" Text="20%" Tag="0.20"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel30" Text="30%（默认）" Tag="0.30"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel40" Text="40%" Tag="0.40"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel50" Text="50%" Tag="0.50"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel60" Text="60%" Tag="0.60"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel70" Text="70%" Tag="0.70"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel80" Text="80%" Tag="0.80"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel90" Text="90%" Tag="0.90"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                            <RadioMenuFlyoutItem x:Name="VolumeLevel100" Text="100%" Tag="1.00"
+                                                 GroupName="VolumeLevel" Click="VolumeLevel_Click" />
+                        </MenuFlyoutSubItem>
+                        <MenuFlyoutItem Text="清空音量规范化记录" Click="VolumeResetRecords_Click"
+                                        ToolTipService.ToolTip="清空所有「已压过」标记：下次启动游戏时会重新把音量压到设定档位（适合换设备后重新匹配）" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="清除游玩记录…" Click="ClearPlayRecord_Click"
                                         ToolTipService.ToolTip="清除勾选（或当前筛选）游戏的游玩明细/累计时长/上次游玩时间" />

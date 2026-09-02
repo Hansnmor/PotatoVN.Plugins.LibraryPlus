@@ -1,7 +1,7 @@
 # LibraryPlus 插件接手开发指南（HANDOFF）
 
 > 本文档面向**新接手的 AI**：读这一篇就能一条龙走完「理解项目 → 开发 → 构建调试 → 提交 → 发布」。
-> 当前版本：v1.4.4。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
+> 当前版本：v1.4.5。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
 
 ---
 
@@ -96,6 +96,23 @@
 - 原「记录」按钮改名「更多」（`MoreToolButton`，菜单 Opening 处理器同步改名 `MoreMenu_Opening`），
   收纳显示开关、游玩记录工具与插件数据备份。
 
+### 3.8 音量规范化（v1.4.5，默认关闭，默认档位 30%）
+- **动机**：galgame 大多默认音量过大。功能开启后，在每款游戏**首次启动**时用 Windows Core Audio
+  把该游戏进程的「应用会话音量」压到设定档位（纯系统级、可逆、零外部依赖，不改游戏内部音量）。
+- **触发**：宿主「开始游玩」消息（`GalgamePlayedMessage`，与守卫同款 Messenger 校验挂载）为主动；
+  兜底 `GalPropertyChanged(LastPlayTime)` 跳变（≤2min 近期判定 + InFlight 去重，两条路径并发只跑一路）。
+- **进程匹配**：优先 `Galgame.ProcessName` → 回退 `ExePath` 文件名（宿主 `TryGetProcessFromName` 同款）；
+  **bat/启动器场景兜底**：名称未命中时，凡「exe 真实路径在游戏目录（`LocalPath`）内 + 进程启动晚于本次启动」
+  的会话都判定为该游戏进程（覆盖 bat → 唤起真正游戏进程、多层 fork 场景）。
+- **「首次」判定**：`PlayCount==0 && TotalPlayTime<5`（对齐宿主 `MinPlayTimeRecordThreshold` 默认 5 分钟）
+  才自动压；**已经玩过的游戏不自动压**（尊重用户手动调整）。
+- **仅首次 + 移动检测**：成功后记录 uuid + 当时进程 exe 路径（`VolumeNormalizedGames`/`VolumeNormalizedPaths`）。
+  之后启动短窗（8s）比对：路径一致 → 跳过；路径变化（移动位置后 Windows 把该进程音量重置回 100%）→
+  重新压一次并更新记录。旧版记录（无路径）下次启动补压一次记录路径。
+- **UI**：「更多」菜单 = 开关 + 档位（10%-100% 每 10% 一档，默认 30%）+ 全量清空记录；
+  游戏封面右键菜单 = 「清空音量规范化记录」（只清当前游戏，下次启动重新压）。
+- 结果 InfoBar：成功（含"检测到路径变化"）、无可用进程/目录、30 秒未找到会话；其余内部诊断走 Log。
+
 ---
 
 ## 4. 构建与调试
@@ -132,6 +149,13 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
 7. **kungal API v2 破坏性变更（已适配，勿回退）**：搜索/详情接口的 `name` 现在都是普通字符串（不再是 `{en-us,ja-jp,zh-cn,zh-tw}` 多语言对象），新增 `name_original`（原名/日文名）；详情 `introduction` 是 `[{lang,intro,machine}]` 数组（不再是多语言对象）。`KungalModels.cs` 里 `KungalCard.Name`、`KungalDetail.Name/NameOriginal/Introduction` 已按新结构建模（`KungalLang` 已移除）。若再遇「所有游戏批量搜刮都未匹配」，优先怀疑 kungal 接口又改了结构（用 curl 打 `/api/search`、`/api/galgame/{gid}` 实测比对）。
 8. **右键菜单触发的导航必须等 `MenuFlyout.Closed` 再执行（v1.4.4，性能红线）**：在 Flyout 的点击处理里（或仅排队一拍）同步执行 `NavigateTo`，页面构建会被卷进菜单关闭动画的病态布局——实测构建耗时从正常的 50-100ms 膨胀到 ~3000ms，且 AppBarButton 本地化文字延迟渲染（宿主 `HomeViewModel.GalFlyOutEdit` 有同款"延迟导航"处理与注释）。正确写法见 `SortPage.EditGame_Click`：记录待办 → 挂一次性 `Closed` 事件 → `Closed` 里再 `InvokeOnMainThread` 导航。左键 `ItemClick` 无此问题，可直接同步导航。
 9. **宿主游玩记录数据流事实（排障必读，v1.4.2 起）**：启动游戏时宿主无条件 `LastPlayTime = DateTime.Now`；`TotalPlayTime/LastPlayTime` 由 `PlayedTime` 字典派生，`MergeTime` 是 max 合并**只增不减**；「删除的记录重启后复活」渠道 = PVN 云同步 pull（游玩时长编辑页的保存**无条件**触发同步任务，不检查同步开关）/ Steam 刷新覆盖 / `.PotatoVN\meta.json` 备份重新入库合并。
+10. **Core Audio 应用会话音量（v1.4.5，音量规范化用，写错必踩坑）**：
+    - 宿主 `GalgameManager/Models/BgTasks/GameMuteTask.cs` 的 `AudioHelper` 是**权威参照**（后台静音功能，已验证可用），接口定义与 IID 照抄它。
+    - **`IAudioSessionEnumerator` 的 IID 必须是 `E2F5BB11-0570-40CA-ACDD-3AA01277DEE8`**——写错（如抄成别的）会因列集器按错误 IID 做 QI 而 `GetSessionEnumerator` 出参恒 null、静默失效。
+    - COM 接口的 vtable 槽位要占齐：`IMMDeviceEnumerator.GetDefaultAudioEndpoint` 是第 2 槽（前面留 1 个占位）、`IAudioSessionManager2.GetSessionEnumerator` 是第 3 槽（继承自 IAudioSessionManager 的 2 个方法占前 2 槽）；`out` 参数直接声明为目标接口类型可避免 object→cast 产生第二 RCW。
+    - **RCW 释放纪律**：所有 `Marshal.ReleaseComObject` 必须 try-catch + 置空（`ReleaseSafe(ref x)`），且在 finally 里抛 `InvalidComObjectException` 会逃过方法内 catch 冒泡到调用方——曾因此「压一次成功却报处理异常」。
+    - 触发判定**不要用 `now <= known` 防回退**：消息路+属性路同秒并发会自相矛盾地误拦；改为「LastPlayTime 在最近 2 分钟」+ `InFlight` 去重即可。
+    - 匹配进程取 `Process.MainModule?.FileName`（bat 场景记录真实游戏 exe 路径，用于移动检测）；`PlayCount` 只在单次游玩 ≥5 分钟才 +1，故「首次」= `PlayCount==0 && TotalPlayTime<5`。
 
 ---
 

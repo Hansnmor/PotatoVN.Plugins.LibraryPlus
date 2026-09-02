@@ -89,7 +89,15 @@ namespace PotatoVN.App.PluginBase
             // 启动守卫：监听全库游戏的 LastPlayTime 跳变，试玩（未达阈值）后还原，
             // 防止原生主页「最后游玩」排序被纯测试打开污染。新增入库的游戏经事件补挂监听。
             Helper.LaunchGuardHelper.Initialize();
-            HostServices.SubscribeGalgameAdded(Helper.LaunchGuardHelper.WatchNewGame);
+            HostServices.SubscribeGalgameAdded(game =>
+            {
+                Helper.LaunchGuardHelper.WatchNewGame(game);
+                Helper.VolumeNormalizer.WatchNewGame(game);
+            });
+
+            // 音量规范化：首次启动时把游戏的应用会话音量压到设定档位（默认 30%，默认关，需在「更多」菜单启用），防默认音量过大。
+            // 触发 = 宿主「开始游玩」消息（主）+ LastPlayTime 跳变（兜底，与守卫同款观察），每款只压一次。
+            Helper.VolumeNormalizer.Initialize();
         }
 
         public Task OnUninstallAsync(bool deleteData, Action<TimeSpan> extendWaitHandler, CancellationToken cts)
@@ -97,6 +105,7 @@ namespace PotatoVN.App.PluginBase
             if (cts.IsCancellationRequested) return Task.FromCanceled(cts);
             HostServices.UnsubscribeGalgameAdded();
             Helper.LaunchGuardHelper.Uninitialize();
+            Helper.VolumeNormalizer.Uninitialize();
             KungalOpenHelper.Uninitialize();
             ResourceLoader.Unload(); //卸载XAML资源字典
             return Task.CompletedTask;
