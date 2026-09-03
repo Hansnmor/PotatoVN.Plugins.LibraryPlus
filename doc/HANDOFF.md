@@ -1,7 +1,7 @@
 # LibraryPlus 插件接手开发指南（HANDOFF）
 
 > 本文档面向**新接手的 AI**：读这一篇就能一条龙走完「理解项目 → 开发 → 构建调试 → 提交 → 发布」。
-> 当前版本：v1.4.5。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
+> 当前版本：v1.4.6。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
 
 ---
 
@@ -113,6 +113,21 @@
   游戏封面右键菜单 = 「清空音量规范化记录」（只清当前游戏，下次启动重新压）。
 - 结果 InfoBar：成功（含"检测到路径变化"）、无可用进程/目录、30 秒未找到会话；其余内部诊断走 Log。
 
+### 3.9 角色中文名修复 + 日志功能（v1.4.6）
+- **角色中文名失效根因**：kungal 把角色详情 `name` 字段从日文名改为简体中文名后，旧代码
+  `IsJapaneseName(kc.Name)` 判定恒 false → bgm 抓取被整体跳过且静默无声（详见 §5 第 11 条）。
+- **修复口径（用户拍板）**：角色**有 bgm 链接** → 直接信 kungal 自带中文名（零网络，镜像 bgm）；
+  角色**无 bgm 链接** → **以 bangumi 为准**：用游戏 `Ids[Bangumi]` subject id 带 token 调
+  `/v0/subjects/{id}/characters` 拿全角色，kungal 日文原名匹配（精确 + 相似度唯一兜底，吸收埼/崎异体字）
+  → 抓 `bgm.tv/character/{id}` 网页取「简体中文名」，可覆盖 kungal 错误译名（如「神埼树」→「神崎五月」）。
+- **带 token**：R18 条目 `/v0/subjects` 匿名 404，`BgmClient.Token = HostServices.GetBgmTokenAsync()`。
+- **诊断日志**：搜刮时打「角色中文名·bgm兜底」+「角色中文名解析」（每角色来源），宿主日志可核对。
+- **扩展库页「更多」→「打开当天日志」**：`HostServices.GetHostDailyLogPath()` 反射宿主
+  `AppStoragePaths.LocalDataPath` 拼 `Logs\log{yyyyMMdd}.txt`（Serilog 滚动，Retained 7 天），
+  `Process.Start(UseShellExecute)` 按 .txt 默认关联打开。
+- **分类日志静默**：`ClassifyContent` 加 `silent` 参数——列表筛选/统计（刷新全库遍历）传 true，
+  不再每次点分类刷「分类[拔作]」日志；默认 false 保留诊断（批量搜刮后核对命中路径用）。
+
 ---
 
 ## 4. 构建与调试
@@ -144,7 +159,7 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
    - `CommandBarLabelPosition` 枚举只有 Default/Collapsed（宿主 WinUI 较旧）。
 3. **不能使用 `DispatcherQueue`**（宿主 WinUI 太旧会 MissingMethodException）；跨线程回 UI 用 `Plugin.HostApi.InvokeOnMainThread`。
 4. **XAML 中别用 `IsChecked` 字面量**（旧 WinUI XamlParseException）；图标用 `FontIcon Glyph`（Symbol 枚举可能缺成员）。
-5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.4.4），与 GitHub tag 对齐。
+5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.4.6），与 GitHub tag 对齐。
 6. 搜刮器/评分 API 细节（VNDB 匿名 POST、Bangumi v1 匿名可拿 R18、host token 经 `HostServices.GetBgmTokenAsync()`）见对应 Helper 文件头注释。
 7. **kungal API v2 破坏性变更（已适配，勿回退）**：搜索/详情接口的 `name` 现在都是普通字符串（不再是 `{en-us,ja-jp,zh-cn,zh-tw}` 多语言对象），新增 `name_original`（原名/日文名）；详情 `introduction` 是 `[{lang,intro,machine}]` 数组（不再是多语言对象）。`KungalModels.cs` 里 `KungalCard.Name`、`KungalDetail.Name/NameOriginal/Introduction` 已按新结构建模（`KungalLang` 已移除）。若再遇「所有游戏批量搜刮都未匹配」，优先怀疑 kungal 接口又改了结构（用 curl 打 `/api/search`、`/api/galgame/{gid}` 实测比对）。
 8. **右键菜单触发的导航必须等 `MenuFlyout.Closed` 再执行（v1.4.4，性能红线）**：在 Flyout 的点击处理里（或仅排队一拍）同步执行 `NavigateTo`，页面构建会被卷进菜单关闭动画的病态布局——实测构建耗时从正常的 50-100ms 膨胀到 ~3000ms，且 AppBarButton 本地化文字延迟渲染（宿主 `HomeViewModel.GalFlyOutEdit` 有同款"延迟导航"处理与注释）。正确写法见 `SortPage.EditGame_Click`：记录待办 → 挂一次性 `Closed` 事件 → `Closed` 里再 `InvokeOnMainThread` 导航。左键 `ItemClick` 无此问题，可直接同步导航。
