@@ -273,26 +273,118 @@ public class KungalPhraser : IGalInfoPhraser
         var kcs = details.Where(k => k != null).Cast<KungalCharacter>().ToList();
         if (kcs.Count == 0) return (result, renamed, addedChars, needsImages);
 
-        // 收集需要 bgm 简体中文名的角色：勾选补齐时拉全部（cn 参与匹配，防「Ymgal 中文名角色 vs kungal
-        // 日文名+cn」配对不上导致的重复补齐）；否则只拉日文名角色（仅用于改名）
-        var bgmClient = new BgmClient();
-        var cnMap = new Dictionary<int, string>();
-        var nameNeed = new List<(int BgmId, int Ki)>();
+        // 简体中文名来源（kungal v2 起 name 字段直接给中文，日文原名挪到 name_original——中文名功能
+        // 早期因此静默失效过一次，这里按来源分两条路，按用户的最终口径实现）：
+        // ① 角色**有 bgm 链接** → 直接信 kungal 自带中文名（name 非日文；实测 kungal 中文名与 bgm
+        //    「简体中文名」10/10 逐字一致），零网络请求；仅当 kungal 没给中文才对该角色抓 bgm 网页。
+        // ② 角色**无 bgm 链接** → 以 bgm 为准：用游戏的 bangumi subject id 一次拉全角色 id+名，
+        //    拿 kungal 的日文原名（name_original/name_ja）归一化精确匹配到 bgm 角色 id，再抓该角色网页
+        //    取「简体中文名」（bgm 收录译名更权威）。注意 characters API 的 infobox **不含**简体中文名
+        //    （实测只在网页 HTML），必须经网页抓。
+        // 需带 token：bgm v0 /subjects 对 R18 条目（galgame 绝大多数）匿名 404，token 全量可见（宿主 Bangumi OAuth）。
+        var bgmClient = new BgmClient { Token = await HostServices.GetBgmTokenAsync() };
+        var kungalCn = new Dictionary<int, string>(); // kcs 索引 → 简体中文名（最终解析结果）
+        var bgmAuthoritative = new HashSet<int>();    // 中文名来自 bgm（网页抓取）的角色：bgm 权威，可覆盖错误中文名
+        bool anyUnresolved = false;                    // 存在「未直接取到 kungal 中文名」的角色 → 可能需要 bgm
         for (int i = 0; i < kcs.Count; i++)
         {
             var (_, bgmId) = ExtractLinkIds(kcs[i].Links);
-            if (bgmId == null || !int.TryParse(bgmId, out int bgm)) continue;
-            if (addMissing || IsJapaneseName(kcs[i].Name)) nameNeed.Add((bgm, i));
+            bool hasLink = bgmId != null && int.TryParse(bgmId, out int _) && bgmId != "-1";
+            string? kn = kcs[i].Name;
+            // ① 有 bgm 链接且 kungal 给了中文 → 直接信 kungal（镜像 bgm，零网络），不需查 bgm
+            if (hasLink && !string.IsNullOrWhiteSpace(kn) && !IsJapaneseName(kn))
+                kungalCn[i] = kn!.Trim();
+            else
+                anyUnresolved = true; // 有链接但 kungal 没给中文，或无链接 → 走下面 bgm 兜底
         }
+        string? subjectIdStr = game.Ids[(int)RssType.Bangumi];
+        // bgm 角色名(归一化) → bgm 角色 id：游戏级兜底先拿整游戏角色列表，无链接角色按名匹配拿 bgm 角色 id
+        var bgmCharIdByName = new Dictionary<string, int>();
+        if (anyUnresolved && !string.IsNullOrEmpty(subjectIdStr) && subjectIdStr != "-1" &&
+            int.TryParse(subjectIdStr, out int subjectId))
+        {
+            // 带 token 拉整游戏 bgm 角色列表一次（R18 条目匿名 404，token 全量可见）；失败则跳过兜底。
+            // 此接口 infobox 不含「简体中文名」（实测只在角色网页 HTML），只拿 (角色id, 角色名)，
+            // 简体中文名随后对命中的角色 id 抓网页解析。
+            foreach (var (charId, bgmName) in await bgmClient.GetSubjectCharactersAsync(subjectId))
+            {
+                string? key = NormalizeName(bgmName);
+                if (key != null) bgmCharIdByName[key] = charId;
+            }
+            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                $"角色中文名·bgm兜底: subject={subjectId} 拉到角色 {bgmCharIdByName.Count} 个");
+        }
+        else if (anyUnresolved)
+        {
+            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                $"角色中文名·bgm兜底: 有未解析角色但游戏无 bangumi id(subjectId={(subjectIdStr is null ? "null" : subjectIdStr)})，跳过");
+        }
+
+        // 组装需抓「简体中文名」网页的角色：(bgm 角色 id, kcs 索引)。
+        // ① 有 bgm 链接但 kungal 没给中文 → 直接用其 bgm 链接 id；
+        // ② 无链接角色 → 用 kungal 日文原名(name_original/name_ja/日文 name)在游戏角色列表里精确匹配拿 bgm id。
+        var needScrape = new List<(int BgmId, int Ki)>();
+        for (int i = 0; i < kcs.Count; i++)
+        {
+            if (kungalCn.ContainsKey(i)) continue; // ① 已用 kungal 中文
+            KungalCharacter kc = kcs[i];
+            var (_, bgmId) = ExtractLinkIds(kc.Links);
+            if (bgmId != null && int.TryParse(bgmId, out int direct) && direct > 0)
+            {
+                needScrape.Add((direct, i)); // 有链接 → 直接抓
+                continue;
+            }
+            // 无链接 → 按日文原名匹配游戏内 bgm 角色
+            int matchedBgm = 0;
+            foreach (string? orig in new[] { kc.NameOriginal, kc.NameJa })
+            {
+                string? key = NormalizeName(orig);
+                if (key != null && bgmCharIdByName.TryGetValue(key, out int v)) { matchedBgm = v; break; }
+            }
+            if (matchedBgm == 0 && IsJapaneseName(kc.Name))
+            {
+                string? key = NormalizeName(kc.Name);
+                if (key != null) bgmCharIdByName.TryGetValue(key, out matchedBgm);
+            }
+            // 精确未命中 → 相似度唯一命中兜底：bgm 与 kungal 用字可能不同（埼/崎 等异体字、
+            // 空格/繁简差异），用字符重叠率找最高分；要求 ≥0.7 且唯一，防同名异角色错配。
+            if (matchedBgm == 0)
+            {
+                string? baseName = kc.NameOriginal ?? kc.NameJa
+                    ?? (IsJapaneseName(kc.Name) ? kc.Name : null);
+                string? norm = NormalizeName(baseName);
+                if (norm != null && norm.Length >= 2)
+                {
+                    double best = 0.7; // 阈值：低于此不冒险
+                    bool ambiguous = false;
+                    foreach (var kv in bgmCharIdByName)
+                    {
+                        if (kv.Key == norm) { best = 1.0; matchedBgm = kv.Value; ambiguous = false; break; }
+                        if (kv.Key.Length < 2 || norm.Length < 2) continue;
+                        double d = CharOverlap(kv.Key, norm);
+                        if (d > best + 1e-9) { best = d; matchedBgm = kv.Value; ambiguous = false; }
+                        else if (Math.Abs(d - best) < 1e-9 && kv.Value != matchedBgm) ambiguous = true;
+                    }
+                    if (ambiguous) matchedBgm = 0; // 两个候选分一样 → 放弃，宁缺毋滥
+                }
+            }
+            if (matchedBgm > 0) needScrape.Add((matchedBgm, i));
+        }
+
+        // 抓每个待查 bgm 角色的网页取简体中文名（网页是唯一可靠来源；匿名可访问，勿用会 404 的 API）。
+        // 按 bgm 角色 id 去重，避免同一角色被多条匹配重复请求。
         using (var sem = new SemaphoreSlim(3)) // 网页服务礼貌限流
         {
-            var tasks = nameNeed.Select(async n =>
+            var distinct = needScrape.GroupBy(x => x.BgmId)
+                .Select(g => (g.Key, g.First().Ki)).ToList();
+            var scrapeMap = new Dictionary<int, string>();
+            var tasks = distinct.Select(async n =>
             {
                 await sem.WaitAsync();
                 try
                 {
-                    string? cn = await bgmClient.GetCharacterCnNameAsync(n.BgmId);
-                    if (!string.IsNullOrWhiteSpace(cn)) cnMap[n.BgmId] = cn;
+                    string? cn = await bgmClient.GetCharacterCnNameAsync(n.Key);
+                    if (!string.IsNullOrWhiteSpace(cn)) scrapeMap[n.Key] = cn;
                 }
                 finally
                 {
@@ -300,11 +392,42 @@ public class KungalPhraser : IGalInfoPhraser
                 }
             });
             await Task.WhenAll(tasks);
+            foreach (var (bgmId, ki) in needScrape)
+                if (scrapeMap.TryGetValue(bgmId, out string? cn) && !string.IsNullOrWhiteSpace(cn))
+                {
+                    kungalCn[ki] = cn;          // bgm 简体中文名 → 以 bgm 为准
+                    bgmAuthoritative.Add(ki);
+                }
         }
 
-        // 匹配：Ids 锚点 + 名称贪心唯一配对（bgm 简体中文名也参与名称匹配——Ymgal 源角色只有
+        // 兜底：仍未解析到中文名（bgm 无此角色/该角色网页无简体中文名）的角色，若 kungal 自带中文名则用上；
+        // 否则保持原名（不覆盖为日文）。已在①直接采用 kungal 的也已就绪。
+        for (int i = 0; i < kcs.Count; i++)
+        {
+            if (kungalCn.ContainsKey(i)) continue;
+            string? kn = kcs[i].Name;
+            if (!string.IsNullOrWhiteSpace(kn) && !IsJapaneseName(kn))
+                kungalCn[i] = kn.Trim(); // kungal 中文名兜底（bgm 没给出时）
+        }
+
+        // 诊断：把每个角色的中文名来源打出来（名称 / 日文原名 / 解析结果 / 是否 bgm 抓取），便于核对匹配。
+        try
+        {
+            string diag = string.Join("；", kcs.Select((kc, i) =>
+            {
+                string? src = kungalCn.TryGetValue(i, out string? cn) ? cn : "无中文名";
+                string hasLink = ExtractLinkIds(kc.Links).BgmId != null ? "有链接" : "无链接";
+                return $"{kc.Name ?? "(无名)"}({hasLink})→{src}";
+            }));
+            if (diag.Length > 400) diag = diag[..400] + "…";
+            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                $"角色中文名解析: {diag}");
+        }
+        catch { /* 日志失败不影响主流程 */ }
+
+        // 匹配：Ids 锚点 + 名称贪心唯一配对（简体中文名也参与名称匹配——Ymgal 源角色只有
         // 中文名、Ids 无 bgm/vndb id 时，靠 cn 与库角色名配对，防重复补齐）
-        (GalgameCharacter? Target, double Score)[] matched = MatchCharacters(game, kcs, cnMap);
+        (GalgameCharacter? Target, double Score)[] matched = MatchCharacters(game, kcs, kungalCn);
 
         // 应用：简介 / 改名 / 补齐
         for (int i = 0; i < kcs.Count; i++)
@@ -312,17 +435,19 @@ public class KungalPhraser : IGalInfoPhraser
             KungalCharacter kc = kcs[i];
             var (vndbId, bgmId) = ExtractLinkIds(kc.Links);
             string? intro = PickCharacterIntro(kc);
-            string? cn = null;
-            if (bgmId != null && int.TryParse(bgmId, out int bgmKey))
-                cnMap.TryGetValue(bgmKey, out cn);
+            // 简体中文名：已由上面①②解析，存在 kungalCn[i]（可能无该索引 → 无 cn，保持原名）
+            kungalCn.TryGetValue(i, out string? cn);
 
             if (matched[i].Target is { } target)
             {
                 // 简介：空或非中文才填
                 if (!string.IsNullOrWhiteSpace(intro) && !IsChinese(target.Summary))
                     result.Add((target, intro));
-                // 名字：日文名 → 简体中文名
-                if (!string.IsNullOrWhiteSpace(cn) && cn != target.Name && IsJapaneseName(target.Name))
+                // 名字：简体中文名。bgm 来源（无链接角色兜底，bgm 权威）→ 与当前名不同即可替换，
+                // 可纠正 kungal 的错误译名（如「神埼树」应为 bgm 的「神崎五月」）；kungal 来源 →
+                // 仅在库内名仍为日文形态时替换（不覆盖用户手动改过的中文名）。
+                if (!string.IsNullOrWhiteSpace(cn) && cn != target.Name &&
+                    (bgmAuthoritative.Contains(i) || IsJapaneseLikeName(target.Name, kc)))
                 {
                     target.Name = cn;
                     renamed++;
@@ -367,6 +492,27 @@ public class KungalPhraser : IGalInfoPhraser
         foreach (char c in text)
             if (c >= '\u3040' && c <= '\u30FF' && c != '\u30FB' && c != '\u30FC')
                 return true;
+        return false;
+    }
+
+    /// <summary>
+    /// 判断库内角色名是否处于"日文形态"——决定是否可安全替换为简体中文名。
+    /// ① 含假名 → 是（<see cref="IsJapaneseName"/>）；
+    /// ② 与 kungal 的 name_original / name_ja 完全相同 → 是。
+    ///    用于覆盖「沢渡真琴」「水瀬名雪」这类**纯汉字、不含任何假名**的日文名：它们
+    ///    IsJapaneseName 判不出来，只靠①会整体漏改，而这类名字在中文圈库里相当常见。
+    /// 已是中文名的角色返回 false——避免覆盖用户手动改过的名字。
+    /// </summary>
+    private static bool IsJapaneseLikeName(string? targetName, KungalCharacter kc)
+    {
+        if (IsJapaneseName(targetName)) return true;
+        if (string.IsNullOrWhiteSpace(targetName)) return false;
+        string t = NormalizeName(targetName) ?? targetName;
+        foreach (string? cand in new[] { kc.NameOriginal, kc.NameJa })
+        {
+            string? n = NormalizeName(cand);
+            if (n != null && n == t) return true;
+        }
         return false;
     }
 
@@ -419,13 +565,13 @@ public class KungalPhraser : IGalInfoPhraser
     /// <summary>
     /// 批量角色匹配：Ids 锚点（VNDB/Bangumi 角色 id）优先；名称匹配（归一化精确 → Dice 重叠率）按得分降序贪心，
     /// 每个 PotatoVN 角色只配一个 kungal 角色（防相似名双胞胎错配）。
-    /// 名称候选：kungal 名 / latin 名 / bgm 简体中文名（cnMap）——简体中文名参与匹配是为了
-    /// 覆盖「库角色是中文名（Ymgal 源）而 kungal 名是日文」的场景，防重复补齐。
+    /// 名称候选：kungal 名 / latin 名 / 简体中文名（<paramref name="cnByIndex"/>，键为 kcs 索引）——中文名
+    /// 参与匹配是为了覆盖「库角色是中文名（Ymgal 源）而 kungal 名是日文」的场景，防重复补齐。
     /// 得分：2=Ids 锚点，1=归一化名称精确，0.6~1=Dice 重叠（吸收繁简/空格/词序差异）。
     /// 返回与 kcs 等长的数组。
     /// </summary>
     private static (GalgameCharacter? Target, double Score)[] MatchCharacters(
-        Galgame game, List<KungalCharacter> kcs, Dictionary<int, string> cnMap)
+        Galgame game, List<KungalCharacter> kcs, Dictionary<int, string> cnByIndex)
     {
         var result = new (GalgameCharacter? Target, double Score)[kcs.Count];
         var pool = game.Characters.Select(c => (Char: c, Name: NormalizeName(c.Name))).ToList();
@@ -456,10 +602,8 @@ public class KungalPhraser : IGalInfoPhraser
             if (result[i].Target != null) continue;
             string? n1 = NormalizeName(kcs[i].Name);
             string? n2 = NormalizeName(kcs[i].NameOriginal) ?? NormalizeName(kcs[i].NameJa);
-            string? n3 = null;
-            var (_, bgmId) = ExtractLinkIds(kcs[i].Links);
-            if (bgmId != null && int.TryParse(bgmId, out int b) && cnMap.TryGetValue(b, out string? cn))
-                n3 = NormalizeName(cn);
+            string? n3 = cnByIndex.TryGetValue(i, out string? cn) && !string.IsNullOrWhiteSpace(cn)
+                ? NormalizeName(cn) : null;
             foreach (var (c, poolName) in pool)
             {
                 if (used.Contains(c) || poolName == null) continue;

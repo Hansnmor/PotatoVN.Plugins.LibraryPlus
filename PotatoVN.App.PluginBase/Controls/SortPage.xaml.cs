@@ -578,7 +578,8 @@ public sealed partial class SortPage : Page
     {
         string key = Plugin.Data.CategoryKey;
         if (key == CategoryKeyAll) return true;
-        return GalgameClassifier.ClassifyContent(game).ToString() == key;
+        // silent：筛选遍历全库，不打分类命中日志（防每次刷新刷屏）
+        return GalgameClassifier.ClassifyContent(game, silent: true).ToString() == key;
     }
 
     /// <summary>形态轴分类匹配（传统ADV/非传统ADV），All=全部</summary>
@@ -735,7 +736,7 @@ public sealed partial class SortPage : Page
             if (minutes is null) unknown++;
             else totalMinutes += minutes.Value;
 
-            GalgameCategory cat = GalgameClassifier.ClassifyContent(g);
+            GalgameCategory cat = GalgameClassifier.ClassifyContent(g, silent: true);
             categoryCounts[cat] = categoryCounts.GetValueOrDefault(cat) + 1;
             GalgameForm form = GalgameClassifier.ClassifyForm(g);
             formCounts[form] = formCounts.GetValueOrDefault(form) + 1;
@@ -1681,6 +1682,30 @@ public sealed partial class SortPage : Page
         catch (Exception ex)
         {
             Plugin.HostApi.Info(InfoBarSeverity.Error, msg: $"打开文件夹失败：{ex.Message}");
+        }
+    }
+
+    private void OpenTodayLog_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string? logPath = HostServices.GetHostDailyLogPath();
+            if (string.IsNullOrEmpty(logPath))
+            {
+                Plugin.HostApi.Info(InfoBarSeverity.Warning,
+                    msg: "当天日志不存在（宿主尚未写日志，或非 MSIX/便携模式无法定位）");
+                return;
+            }
+            // UseShellExecute：交给系统按 .txt 默认关联打开（记事本/VS Code 等）
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = logPath,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Error, msg: $"打开日志失败：{ex.Message}");
         }
     }
 

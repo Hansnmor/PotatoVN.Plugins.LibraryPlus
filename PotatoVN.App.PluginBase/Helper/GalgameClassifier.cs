@@ -40,8 +40,14 @@ public static class GalgameClassifier
     /// <summary>投票分换算热度单位（1 拆票 ≈ 500 热度），少票融合时使用</summary>
     private const double VoteToHeatFactor = 3000;
 
-    /// <summary>内容轴分类（不触发网络，仅遍历本地数据）</summary>
-    public static GalgameCategory ClassifyContent(Galgame game)
+    /// <summary>
+    /// 内容轴分类（不触发网络，仅遍历本地数据）。
+    /// </summary>
+    /// <param name="game">目标游戏</param>
+    /// <param name="silent">静默模式：为 true 时不打「分类[拔作]」命中日志。列表筛选/统计每次
+    /// 刷新会对全库逐个分类，若打日志会刷屏（库内每款拔作一行×每次刷新）——筛选链路一律传 true；
+    /// 默认 false 保留诊断能力（如批量搜刮后逐款核对命中路径）。</param>
+    public static GalgameCategory ClassifyContent(Galgame game, bool silent = false)
     {
         // ① 手动覆盖（用户显式设定，最高优先级——自动分类有边界，个人认知靠手动兜底）
         if (Plugin.Data.UserCategory.GetValueOrDefault(game.Uuid.ToString()) is { } manual &&
@@ -58,8 +64,9 @@ public static class GalgameClassifier
         if (kungal is { Tags.Count: > 0 } &&
             kungal.Tags.Any(t => t.Category is "content" or "sexual" && IsNukigeTag(t.Name)))
         {
-            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
-                $"分类[拔作]: {game.Name.Value} 路径=kungal拔作tag");
+            if (!silent)
+                Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                    $"分类[拔作]: {game.Name.Value} 路径=kungal拔作tag");
             return GalgameCategory.Nukige;
         }
 
@@ -82,7 +89,7 @@ public static class GalgameClassifier
                 if (combined.Count > 0)
                 {
                     var winner = combined.OrderByDescending(kv => kv.Value).First();
-                    if (winner.Key == GalgameCategory.Nukige)
+                    if (!silent && winner.Key == GalgameCategory.Nukige)
                         Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
                             $"分类[拔作]: {game.Name.Value} 路径=投票融合 {string.Join(",", combined.Select(kv => $"{kv.Key}={kv.Value:F0}"))}");
                     return winner.Key;
@@ -102,7 +109,7 @@ public static class GalgameClassifier
 
         // ⑤ 旧关键词规则 fallback（同人作归「其他」——同人 ADV 无内容证据，形态轴另行判定）
         var legacy = ClassifyLegacy(game);
-        if (legacy == GalgameCategoryLegacy.Nukige)
+        if (!silent && legacy == GalgameCategoryLegacy.Nukige)
             Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
                 $"分类[拔作]: {game.Name.Value} 路径=fallback旧规则 tags={string.Join(",", (game.Tags?.Value ?? []).Take(15))}");
         return legacy switch

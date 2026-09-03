@@ -156,6 +156,58 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
     - **RCW 释放纪律**：所有 `Marshal.ReleaseComObject` 必须 try-catch + 置空（`ReleaseSafe(ref x)`），且在 finally 里抛 `InvalidComObjectException` 会逃过方法内 catch 冒泡到调用方——曾因此「压一次成功却报处理异常」。
     - 触发判定**不要用 `now <= known` 防回退**：消息路+属性路同秒并发会自相矛盾地误拦；改为「LastPlayTime 在最近 2 分钟」+ `InFlight` 去重即可。
     - 匹配进程取 `Process.MainModule?.FileName`（bat 场景记录真实游戏 exe 路径，用于移动检测）；`PlayCount` 只在单次游玩 ≥5 分钟才 +1，故「首次」= `PlayCount==0 && TotalPlayTime<5`。
+11. **kungal 角色中文字段语义与 bgm 抓取定位（角色中文名功能，踩过坑）**：
+    - kungal 角色详情 `/api/galgame-character/{id}` 的 `name` 是**简体中文名**，`name_original` 是日文原名，
+      `name_ja` 恒为 null。实测 10/10 与 bgm 角色页「简体中文名」完全一致、`name_original` 与 bgm 日文主名
+      逐字一致——**kungal 已镜像 bangumi 角色数据**。但 kungal 并非全本地化：**部分角色（尤其冷门作）只有
+      vndb 链接、无 bgm 链接，kungal 给的中文译名可能与 bgm 不一致**（实例：轮舞曲Duo「神埼 イツキ」，
+      kungal 给「神埼树」，bgm 收录的是另一译名，两者不同）。
+    - **不要把「名字是否日文」当开关**：旧代码用 `IsJapaneseName(kc.Name)` 决定要不要抓 bgm，kungal 把中文名
+      填进 `name` 后该判定恒为 false → bgm 抓取被整体跳过、`cn` 恒 null、改名条件不成立，
+      **功能静默失效（不报错、不打日志，只能看到"中文名没了"）**。
+    - **最终口径（用户拍板，KungalPhraser.FetchCharacterIntrosAsync 内实现）**：
+      - 角色**有 bgm 链接** → 直接用 kungal 自带中文名（镜像 bgm，零网络）；仅当 kungal 也没给中文
+        （`name` 仍是日文）才抓单个 bgm 角色页补。
+      - 角色**无 bgm 链接** → **以 bgm 为准**：用库内游戏 `Ids[Bangumi]` 的 subject id 带 token 调
+        `GET /v0/subjects/{id}/characters` **一次拉全该游戏角色 (bgm角色id, bgm角色名)**，拿 kungal 日文原名
+        （`name_original`/`name_ja`）在列表里**归一化精确匹配**（`NormalizeName`，不模糊防同名异角色错配）
+        → 拿到 bgm 角色 id，再抓 `bgm.tv/character/{id}` 网页取「简体中文名」覆盖 kungal；bgm 无此角色/
+        该角色网页无简体中文名 → 退回 kungal 中文名 / 保持原名。
+      - **⚠️ 别信 characters API 的 infobox 有简体中文名**：实测 `GET /v0/subjects/{id}/characters` 返回数组，
+        每项含 `id`/`name`/`infobox`，但 **infobox 里没有「简体中文名」**（简体中文名只存在于角色网页
+        HTML）——我曾误按「infobox 有简体中文名」实现，结果整条游戏级兜底拿不到任何名，角色全退回
+        kungal 中文名。正确姿势：API 只拿 (角色id, 角色名) 用于匹配，简体中文名一律对该角色 id 抓网页解析
+        （`GetCharacterCnNameAsync`，匿名可访问）。
+      - **bgm 必须带 token**：`/v0/subjects` 对 R18 条目（galgame 绝大多数）匿名 404，需宿主 Bangumi
+        OAuth token（`HostServices.GetBgmTokenAsync()` → `BgmClient.Token`）才全量可见。逐角色网页抓取
+        `bgm.tv/character/{id}` 是 HTML、匿名可访问、不需 token。
+      - **纯汉字日文名不含假名**，`IsJapaneseName` 判不出来（如「沢渡真琴」「水瀬名雪」，中文圈库里很常见）。
+        判断"库内角色名是否日文形态"统一走 `IsJapaneseLikeName`：含假名 **或** 与 kungal 的
+        `name_original`/`name_ja` 完全相同（后者专门覆盖纯汉字场景）。
+    - **bgm API 角色数据要点**：`GET /v0/subjects/{id}/characters` 直接返回**数组**（非分页对象），每项含
+      `id`(bgm 角色 id)、`name`(主名，多为日文)、`infobox`(key-value 数组，但**不含**简体中文名，别指望它)。
+      简体中文名只能抓 `bgm.tv/character/{cid}` 网页。bgm subject 搜索对罗马字/中文标题分词不友好，
+      定位条目优先用库里已存的 subject id，别依赖搜索。
+    - 环境：**`bgm.tv` / `api.bgm.tv` 在本机直连必然超时**（DNS 被污染，解析到 `2a03:2880::/32`、
+      `31.13.64.0/18` 等非真实地址），必须走 Clash 系统代理（`127.0.0.1:7889`）。
+      规律：kungal 直连可达，bgm 必须走代理。
+    - **排障坑**：本机 Bash 环境自带 `http_proxy/https_proxy=127.0.0.1:3327`（沙箱代理），
+      Python urllib / curl 默认会走它 → 用它测 bgm.tv 会得到**假阴性**（全超时，极易误判为"bgm 挂了"、
+      "正则失效"）。测外网必须显式 `curl -x http://127.0.0.1:7889`，或用 `--noproxy '*'` 做对照。
+    - **bgm subject 是 R18 时匿名搜索也常查不到**（如轮舞曲Duo 116779）：搜「輪舞曲/Rondo/Duo」等均无结果、
+      匿名 `GET /v0/subjects/116779` 返回 404，但网页 `bgm.tv/subject/116779` 是 200——条目真实存在，
+      只是被 R18 + 匿名限制隐藏，别据此误判"bgm 没收录"。
+    - **⚠️ 对 kungal 结构漂移的鲁棒性边界（用户拍板：维持「有链接信 kungal」）**：本功能对 kungal 有 4 个
+      隐性假设，失效后果与发现难度不同——新增诊断日志（搜刮时「角色中文名·bgm兜底」「角色中文名解析」两行）
+      就是为这类漂移准备的探针：
+      | 假设 | 失效后果 | 发现难度 |
+      |---|---|---|
+      | `name` 非日文 ⇒ 可信中文名（有链接时直接信） | 若 name 被改成英文等会被**静默写错** | 需对比库内实际值 |
+      | `name_original`/`name_ja` 是日文原名 | bgm 匹配不上 → 退回 kungal 名 | 日志可见 |
+      | links 的 source 名不变（vndb/bangumi） | 角色被当「无链接」→ 走游戏级兜底 | 日志可见 |
+      | 游戏级 `Ids[Bangumi]` 是 subject id | 兜底跳过 | 日志可见 |
+      **kungal 又改结构时的快速排查**：tools/ 下跑 `probe_cnname_rate.py`（看 name 是否仍为中文）+ 对比
+      `name/name_original/name_ja` 实际取值；然后看宿主日志「角色中文名解析」行判断断在哪一层。
 
 ---
 

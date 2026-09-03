@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -334,6 +335,34 @@ internal static class HostServices
         catch
         {
             // 静默
+        }
+    }
+
+    /// <summary>
+    /// 反射宿主 GalgameManager.Helpers.AppStoragePaths.LocalDataPath 拼当天主日志路径
+    /// （宿主 Serilog 滚动日志：{LocalDataPath}\Logs\log{yyyyMMdd}.txt，Retained 7 天）。
+    /// 用 AppStoragePaths 而非 FileHelper.AppDataPath：后者是 private set、需宿主先访问 FileService
+    /// 才被赋值，插件只读反射可能拿到空串；AppStoragePaths.LocalDataPath 是 Lazy 自动计算，稳。
+    /// 文件不存在返回 null（如当天尚无日志）。
+    /// </summary>
+    public static string? GetHostDailyLogPath()
+    {
+        try
+        {
+            Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+            if (host is null) return null;
+            Type? paths = host.GetType("GalgameManager.Helpers.AppStoragePaths");
+            PropertyInfo? prop = paths?.GetProperty("LocalDataPath",
+                BindingFlags.Public | BindingFlags.Static);
+            string? appData = prop?.GetValue(null) as string;
+            if (string.IsNullOrWhiteSpace(appData)) return null;
+            string logPath = Path.Combine(appData, "Logs", $"log{DateTime.Now:yyyyMMdd}.txt");
+            return File.Exists(logPath) ? logPath : null;
+        }
+        catch
+        {
+            return null; // 反射失败 → 调用方给提示
         }
     }
 }

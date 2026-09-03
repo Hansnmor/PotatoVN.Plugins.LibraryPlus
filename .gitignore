@@ -70,6 +70,9 @@ artifacts/
 commit_msg.txt
 release.json
 
+# WorkBuddy 项目记忆目录（会话数据，不入库）
+.workbuddy/
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 
