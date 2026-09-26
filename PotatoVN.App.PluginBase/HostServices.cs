@@ -339,6 +339,28 @@ internal static class HostServices
     }
 
     /// <summary>
+    /// 宿主 LocalDataPath（反射 GalgameManager.Helpers.AppStoragePaths.LocalDataPath）。
+    /// 插件本地文件（如 NextMoe OAuth 令牌加密文件）的存放基准目录；拿不到返回 null。
+    /// </summary>
+    public static string? GetHostLocalDataPath()
+    {
+        try
+        {
+            Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+            if (host is null) return null;
+            Type? paths = host.GetType("GalgameManager.Helpers.AppStoragePaths");
+            PropertyInfo? prop = paths?.GetProperty("LocalDataPath",
+                BindingFlags.Public | BindingFlags.Static);
+            return prop?.GetValue(null) as string;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 反射宿主 GalgameManager.Helpers.AppStoragePaths.LocalDataPath 拼当天主日志路径
     /// （宿主 Serilog 滚动日志：{LocalDataPath}\Logs\log{yyyyMMdd}.txt，Retained 7 天）。
     /// 用 AppStoragePaths 而非 FileHelper.AppDataPath：后者是 private set、需宿主先访问 FileService

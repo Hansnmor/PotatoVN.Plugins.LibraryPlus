@@ -7,6 +7,7 @@ using GalgameManager.WinApp.Base.Contracts.PluginUi;
 using GalgameManager.WinApp.Base.Models;
 using PotatoVN.App.PluginBase.Helper;
 using PotatoVN.App.PluginBase.Helper.Kungal;
+using PotatoVN.App.PluginBase.Helper.NextMoe;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase
@@ -93,6 +94,20 @@ namespace PotatoVN.App.PluginBase
             {
                 Helper.LaunchGuardHelper.WatchNewGame(game);
                 Helper.VolumeNormalizer.WatchNewGame(game);
+            });
+
+            // NextMoe 搜刮凭据：用户访问令牌（OAuth 授权码+PKCE），按用户计配额。
+            // 未登录时 GetAccessTokenAsync 返回 null → 请求带不上 Authorization → 401，
+            // 由 NextMoeClient 打日志提示；令牌文件在宿主 LocalDataPath 下 DPAPI 加密存储。
+            NextMoeClient.InstanceCredentialProvider = NextMoeSession.Instance.GetAccessTokenAsync;
+
+            // 后台预热 NextMoe 令牌：access token 只有 15 分钟寿命，
+            // 若等到用户点搜刮时才刷新，那次会多一次刷新往返（实测让详情+角色段从 ~1s 变成 ~6s）。
+            // 启动时静默暖一次，用户第一次搜刮就是热的。未登录时 GetAccessTokenAsync 直接返回 null、不发请求。
+            _ = Task.Run(async () =>
+            {
+                try { await NextMoeSession.Instance.GetAccessTokenAsync(); }
+                catch { /* 预热失败无所谓，搜刮时会再试 */ }
             });
 
             // 音量规范化：首次启动时把游戏的应用会话音量压到设定档位（默认 30%，默认关，需在「更多」菜单启用），防默认音量过大。

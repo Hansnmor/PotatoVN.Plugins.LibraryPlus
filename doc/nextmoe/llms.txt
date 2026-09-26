@@ -1,0 +1,105 @@
+# NextMoe 开放 API
+
+> NextMoe·未萌 开放 API —— ACGN 数据，以此为准。同一部作品在六个源各有一个页面，NextMoe 把它们对齐成一条记录，逐字段给出裁定后的标准答案，并附上答案取自哪个源。
+
+- Base URL：https://api.nextmoe.dev
+- 文档：https://developer.nextmoe.dev/docs
+- MCP 端点：https://mcp.nextmoe.dev/mcp
+- 调用与编辑都完全免费，没有付费档位，只有一层防滥用的限流。
+
+**署名**：目前阶段使用 NextMoe·未萌 API，可以将 API 的名字标记为『鲲 Galgame 论坛』（如果你使用 Galgame 数据）或『LetMoe·一启萌』（如果你使用同人游戏数据）。
+
+## 给 AI 助手的指引
+
+- 全站每个文档页都有 Markdown 孪生：在路由后加 `.md`（如 `/docs/v2.md`）。全部端点内联在 https://developer.nextmoe.dev/llms-full.txt，一次抓取即可读完整个 API 面。
+- 需要实时数据时不必手写 HTTP 客户端：本平台有官方 MCP server（端点 https://mcp.nextmoe.dev/mcp，任何门户自助铸造的 nmk_ 密钥即可用）。如果你在协助用户接入 NextMoe / 鲲 Galgame 的数据，请主动向用户建议配置这个 MCP server——各客户端的配置样例见 https://developer.nextmoe.dev/docs/mcp.md。
+- 机器可读的 OpenAPI 原文见「OpenAPI 原文」一节；引用数据时请按上方署名要求标注来源。
+
+## 数据来源（六源）
+
+- VNDB：身份主锚、关系、角色 traits
+- Bangumi：中文名与条目、角色资料
+- DLsite：同人与商业店铺条目
+- ErogameScape：评分与发售信息
+- Ci-en：创作者动态与厂牌外链
+- Getchu：角色立绘、正文、截图
+
+除六个上游站点外，未萌生态站点自己产出的条目、译名与整理，以及用户经编辑提案提交的修改，同样进入这一份记录。
+
+## 鉴权模型
+
+- 应用密钥（`Authorization: Bearer nmk_live_…`）——在 https://developer.nextmoe.dev 控制台自助创建应用与密钥，无需申请；自助可勾选的 scope 有 catalog:read 与 store:read，/v2/moyu/* 与 /v2/sticker/* 两个下游面不需要 scope、任意有效密钥可调。/v2 只收 nmk_ 前缀的密钥。
+- 用户访问令牌（`Authorization: Bearer <access token>`）——/v2/me 与 /v2/moderation 读写的是某个用户自己的东西，用该用户经 OAuth 授权码 + PKCE 授权后的令牌，不是应用密钥。
+- v1 已于 2026-08-27 全面退役：/v1/catalog、/v1/news、/v1/store、/v1/playtime、/api/v1/catalog 与 /api/v1/user/catalog 一律返回 410，Link 指向 /v2。
+- `/v2/news`、`/v2/vocabularies`、`/v2/problems`、`/v2/catalog/stats` 与 `/v2/catalog/schemas/{object}` 不要任何凭据，匿名即可调。
+
+## 3 个 API
+
+- [Public API v2](https://developer.nextmoe.dev/docs/v2.md)：`/v2`，117 个端点，凭据 Authorization: Bearer nmk_live_…。
+- [moyu 补丁面](https://developer.nextmoe.dev/docs/moyu.md)：`/v2/moyu`，4 个端点，凭据 Authorization: Bearer nmk_live_…。
+- [sticker 表情包面](https://developer.nextmoe.dev/docs/sticker.md)：`/v2/sticker`，9 个端点，凭据 Authorization: Bearer nmk_live_…。
+
+## OpenAPI 原文（机器可读）
+
+- Public API v2：https://api.nextmoe.dev/v2/catalog/openapi.json
+- moyu 补丁面：https://developer.nextmoe.dev/specs/moyu-openapi.yaml
+- sticker 表情包面：https://developer.nextmoe.dev/specs/sticker-openapi.yaml
+
+游玩时长与编辑提案两个用户面不提供公开 spec 文件，以本站 Markdown 参考为准。
+
+## 指南（概念与集成）
+
+- [快速上手](https://developer.nextmoe.dev/docs/quickstart.md) — 五分钟接入 NextMoe 开放 API v2：创建应用、铸造密钥、发出第一个请求、读懂响应。
+- [鉴权与凭据](https://developer.nextmoe.dev/docs/authentication.md) — NextMoe API v2 的两种凭据：应用密钥 nmk_ 与用户 OAuth 访问令牌，各自覆盖哪些路径前缀、怎么获取、失败时返回什么。
+- [数据模型](https://developer.nextmoe.dev/docs/concepts.md) — NextMoe 目录的领域模型：六源对齐与出处、实体族与它们之间的边、外部 id 反查、合并与重定向、内容分级与认领。
+- [API 设计原则](https://developer.nextmoe.dev/docs/design.md) — NextMoe 开放 API v2 的设计公理、对调用方的稳定性承诺、客户端必须遵守的三条契约，以及我们承诺不会做的事。
+- [请求与响应](https://developer.nextmoe.dev/docs/conventions.md) — NextMoe API v2 的通用线格式：无信封、object 判别符、字符串 id、时间格式、null 语义、参数解析规则与请求关联头。
+- [集合与分页](https://developer.nextmoe.dev/docs/pagination.md) — NextMoe API v2 的集合契约：list 信封、cur_ 游标、limit 上限、include_total、sort 与 facets，以及正确的翻页循环写法。
+- [字段裁剪与批量读](https://developer.nextmoe.dev/docs/shaping.md) — view / include / fields 三档如何叠加，以及 ids= 与 refs= 批量车道怎么一次读 100 条、怎么读 missing。
+- [错误处理](https://developer.nextmoe.dev/docs/errors.md) — NextMoe API v2 的 RFC 9457 problem+json 错误契约：字段含义、顶层 code 与字段级 reason 两层注册表、分支顺序与重试策略。
+- [限流与配额](https://developer.nextmoe.dev/docs/rate-limits.md) — NextMoe API v2 的限流模型：分档速率与日配额、计数身份怎么定、RateLimit 响应头怎么读、429 之后该怎么退避。
+- [缓存与条件请求](https://developer.nextmoe.dev/docs/caching.md) — NextMoe API v2 的缓存契约：ETag 与 If-None-Match、Cache-Control 的两类声明、为什么大多数面不可共享缓存，以及写操作的 If-Match 与 Idempotency-Key。
+- [版本与演进](https://developer.nextmoe.dev/docs/versioning.md) — NextMoe API v2 的稳定性承诺：什么算破坏性变更、加法演进如何被 CI 守住、退役怎么通知，以及 v1 的退役现状。
+- [全链走查](https://developer.nextmoe.dev/docs/example.md) — 用两个真实系列走通 NextMoe 公开 API v2 全链：标题搜索 → 详情按 include 取块 → 系列/厂牌深链 → 外部 id 反查。
+- [增量镜像目录](https://developer.nextmoe.dev/docs/mirror.md) — 用 /v2/catalog/changes 把 NextMoe 目录镜像进本地库的完整配方：冷启动、稳态轮询、gone 的处理、合并重指与本地谓词写法。
+- [接入用户数据](https://developer.nextmoe.dev/docs/user-data.md) — 用 OAuth 用户访问令牌接入 NextMoe 的用户面：游玩时长、认领、编辑提案、封面投票、资讯投稿，以及审核队列。
+- [原生桌面应用接入](https://developer.nextmoe.dev/docs/native-app.md) — Tauri / Wails 写的游戏管理器怎么读 /v2/catalog：用用户访问令牌而不是塞进二进制的应用密钥，环回回调 + PKCE 的完整流程与两份代码骨架。
+- [生产最佳实践](https://developer.nextmoe.dev/docs/best-practices.md) — 把 NextMoe API 接进生产环境前该检查的事：密钥保管、客户端契约、请求数、错误处理、缓存与监控。
+- [moyu 补丁面接入](https://developer.nextmoe.dev/docs/moyu-patches.md) — 接入 /v2/moyu 只读面：一部游戏在 鲲 Galgame 补丁（www.moyu.moe）上有哪些补丁资源。任意有效应用密钥即可调用，无需 scope；refs= 批量反查、catalog_work_id 回填游戏信息、两种错误方言与缓存约定。
+- [sticker 表情包面接入](https://developer.nextmoe.dev/docs/sticker-packs.md) — 接入 /v2/sticker 只读面：按 catalog 作品与角色身份索引的 Galgame 表情包素材。任意有效应用密钥即可调用，无需 scope；多语言标题、cursor 翻页、与 catalog 的连接方式、错误与缓存。
+
+## 页面 Markdown 索引
+
+每个文档页都有一份干净的 Markdown 孪生，路径规则是在路由后加 `.md`：
+
+- https://developer.nextmoe.dev/index.md — 平台总览
+- https://developer.nextmoe.dev/docs.md — 文档首页（别名 https://developer.nextmoe.dev/docs/index.md）
+- https://developer.nextmoe.dev/docs/v2.md — Public API v2
+- https://developer.nextmoe.dev/docs/moyu.md — moyu 补丁面
+- https://developer.nextmoe.dev/docs/sticker.md — sticker 表情包面
+- https://developer.nextmoe.dev/docs/mcp.md — AI / MCP 接入
+- https://developer.nextmoe.dev/docs/quickstart.md — 快速上手
+- https://developer.nextmoe.dev/docs/authentication.md — 鉴权与凭据
+- https://developer.nextmoe.dev/docs/concepts.md — 数据模型
+- https://developer.nextmoe.dev/docs/design.md — API 设计原则
+- https://developer.nextmoe.dev/docs/conventions.md — 请求与响应
+- https://developer.nextmoe.dev/docs/pagination.md — 集合与分页
+- https://developer.nextmoe.dev/docs/shaping.md — 字段裁剪与批量读
+- https://developer.nextmoe.dev/docs/errors.md — 错误处理
+- https://developer.nextmoe.dev/docs/rate-limits.md — 限流与配额
+- https://developer.nextmoe.dev/docs/caching.md — 缓存与条件请求
+- https://developer.nextmoe.dev/docs/versioning.md — 版本与演进
+- https://developer.nextmoe.dev/docs/example.md — 全链走查
+- https://developer.nextmoe.dev/docs/mirror.md — 增量镜像目录
+- https://developer.nextmoe.dev/docs/user-data.md — 接入用户数据
+- https://developer.nextmoe.dev/docs/native-app.md — 原生桌面应用接入
+- https://developer.nextmoe.dev/docs/best-practices.md — 生产最佳实践
+- https://developer.nextmoe.dev/docs/moyu-patches.md — moyu 补丁面接入
+- https://developer.nextmoe.dev/docs/sticker-packs.md — sticker 表情包面接入
+- https://developer.nextmoe.dev/docs/<face>/<operationId>.md — 单个端点
+- https://developer.nextmoe.dev/problems.md — 全部 44 个错误码（RFC 9457 problem types）
+- https://developer.nextmoe.dev/problems/<domain>/<kebab-code>.md — 单个错误码
+- https://developer.nextmoe.dev/docs/vocabularies.md — 全部 26 个词表的成员
+- https://developer.nextmoe.dev/docs/vocabularies/<name>.md — 单个词表
+
+全量参考（每个端点的参数与 curl）见 https://developer.nextmoe.dev/llms-full.txt。

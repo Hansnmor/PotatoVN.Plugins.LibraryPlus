@@ -17,6 +17,13 @@ internal class KungalCard
     [JsonPropertyName("id")] public int Id { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("name_original")] public string? NameOriginal { get; set; }
+
+    /// <summary>
+    /// 非 JSON 字段：该候选来自 refs 精确反查且唯一（NextMoe 侧 ?refs=vndb:vNNN 命中恰好 1 条）。
+    /// 服务端已按外部 id 精确匹配，调用方可直接采信、省掉一次全量详情校验请求
+    /// （NextMoe 单请求 RTT ≈1s，匹配阶段最多可省 3 次）。
+    /// </summary>
+    [JsonIgnore] public bool ExactRefMatch { get; set; }
 }
 
 internal class KungalSearchData

@@ -192,6 +192,11 @@
                 </AppBarButton.Icon>
                 <AppBarButton.Flyout>
                     <MenuFlyout Opening="MoreMenu_Opening">
+                        <!-- NextMoe 登录态：Text 由 MoreMenu_Opening 按登录态写入（不写字面量，避免与实际状态不符） -->
+                        <MenuFlyoutItem x:Name="NextMoeLoginItem" Text="登录 NextMoe 账号（搜刮数据源）"
+                                        Click="NextMoeLogin_Click"
+                                        ToolTipService.ToolTip="kungal 匿名接口已停用，搜刮改走 NextMoe 开放 API：需要用你自己的 NextMoe 账号授权一次（令牌存本地，配额按用户独立计算，不占用开发者额度）。未登录时搜刮会全部失败" />
+                        <MenuFlyoutSeparator />
                         <ToggleMenuFlyoutItem x:Name="ShowVirtualGameItem" Text="显示非本地游戏"
                                               Click="ShowVirtualGame_Click"
                                               ToolTipService.ToolTip="库里有条目、但本机已没有游戏文件的记录（云同步换机后常见，原生称「虚拟游戏」）。默认不显示，也不参与统计与批量操作" />

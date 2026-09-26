@@ -19,6 +19,7 @@ using PotatoVN.App.PluginBase.Helper;
 using Windows.Foundation;
 using PotatoVN.App.PluginBase.Helper.Bangumi;
 using PotatoVN.App.PluginBase.Helper.Kungal;
+using PotatoVN.App.PluginBase.Helper.NextMoe;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase.Controls;
@@ -833,6 +834,9 @@ public sealed partial class SortPage : Page
     {
         try
         {
+            NextMoeLoginItem.Text = NextMoeSession.Instance.IsLoggedIn
+                ? "退出 NextMoe 登录"
+                : "登录 NextMoe 账号（搜刮数据源）";
             ShowVirtualGameItem.IsChecked = Plugin.Data.DisplayVirtualGame;
             GuardToggleItem.IsChecked = Plugin.Data.LaunchGuardEnabled;
             foreach (RadioMenuFlyoutItem item in new[]
@@ -852,6 +856,40 @@ public sealed partial class SortPage : Page
         catch
         {
             // 页面销毁中，忽略
+        }
+    }
+
+    /// <summary>
+    /// NextMoe 登录 / 退出：kungal 匿名接口停用后，搜刮凭据改用用户自己的 NextMoe 访问令牌
+    /// （OAuth 授权码+PKCE，浏览器授权一次，refresh token 用 DPAPI 加密存本地，配额按用户独立计算）。
+    /// </summary>
+    private async void NextMoeLogin_Click(object sender, RoutedEventArgs e)
+    {
+        if (NextMoeSession.Instance.IsLoggedIn)
+        {
+            NextMoeSession.Instance.SignOut();
+            NextMoeLoginItem.Text = "登录 NextMoe 账号（搜刮数据源）";
+            Plugin.HostApi.Info(InfoBarSeverity.Informational, title: "已退出 NextMoe",
+                msg: "本地令牌已删除。重新登录前，搜刮与角色中文名补全都无法使用。");
+            return;
+        }
+
+        NextMoeLoginItem.IsEnabled = false;
+        try
+        {
+            // 内部会打开系统浏览器并监听环回回调（最长 5 分钟）；await 不阻塞 UI 线程
+            bool ok = await NextMoeSession.Instance.SignInAsync();
+            NextMoeLoginItem.Text = ok ? "退出 NextMoe 登录" : "登录 NextMoe 账号（搜刮数据源）";
+            if (ok)
+                Plugin.HostApi.Info(InfoBarSeverity.Success, title: "登录成功",
+                    msg: "已取得 NextMoe 访问令牌，搜刮恢复正常。");
+            else
+                Plugin.HostApi.Info(InfoBarSeverity.Error, title: "登录失败",
+                    msg: "浏览器授权未完成或被拒绝。若反复失败，用「打开当天日志」查看具体原因。");
+        }
+        finally
+        {
+            NextMoeLoginItem.IsEnabled = true;
         }
     }
 

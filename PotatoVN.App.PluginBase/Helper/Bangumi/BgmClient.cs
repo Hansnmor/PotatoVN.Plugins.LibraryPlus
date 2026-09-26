@@ -72,7 +72,18 @@ internal class BgmClient
     /// <summary>角色页抓取节流（网页服务比 API 宽松，保守 0.5s）</summary>
     public TimeSpan PageRequestDelay { get; set; } = TimeSpan.FromMilliseconds(500);
 
-    private static readonly HttpClient Client = new();
+    private static readonly HttpClient Client = CreateClient();
+
+    /// <summary>
+    /// 显式设 20s 超时：无参 <c>new HttpClient()</c> 的默认超时是 100 秒，
+    /// 链路异常时会把整个搜刮流程挂住（批量搜刮里 bgm 兜底是串行前置步骤）。
+    /// </summary>
+    /// <remarks>
+    /// **必须走系统代理，不要加 UseProxy = false**：本机实测 bgm.tv 直连不通（http=000、13.8 秒超时），
+    /// 走 Clash 代理 1.3~3.6 秒正常 —— 与 NextMoe 的情况正好相反（那边直连更快，已在 NextMoeClient 里关掉代理）。
+    /// </remarks>
+    private static HttpClient CreateClient()
+        => new() { Timeout = TimeSpan.FromSeconds(20) };
 
     /// <summary>拉取条目的 tag 投票列表；失败/未登录返回 null</summary>
     public async Task<List<BgmTag>?> GetTagsAsync(int subjectId)

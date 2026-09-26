@@ -159,9 +159,17 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
    - `CommandBarLabelPosition` 枚举只有 Default/Collapsed（宿主 WinUI 较旧）。
 3. **不能使用 `DispatcherQueue`**（宿主 WinUI 太旧会 MissingMethodException）；跨线程回 UI 用 `Plugin.HostApi.InvokeOnMainThread`。
 4. **XAML 中别用 `IsChecked` 字面量**（旧 WinUI XamlParseException）；图标用 `FontIcon Glyph`（Symbol 枚举可能缺成员）。
-5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.4.6），与 GitHub tag 对齐。
+5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.5.0），与 GitHub tag 对齐。
 6. 搜刮器/评分 API 细节（VNDB 匿名 POST、Bangumi v1 匿名可拿 R18、host token 经 `HostServices.GetBgmTokenAsync()`）见对应 Helper 文件头注释。
-7. **kungal API v2 破坏性变更（已适配，勿回退）**：搜索/详情接口的 `name` 现在都是普通字符串（不再是 `{en-us,ja-jp,zh-cn,zh-tw}` 多语言对象），新增 `name_original`（原名/日文名）；详情 `introduction` 是 `[{lang,intro,machine}]` 数组（不再是多语言对象）。`KungalModels.cs` 里 `KungalCard.Name`、`KungalDetail.Name/NameOriginal/Introduction` 已按新结构建模（`KungalLang` 已移除）。若再遇「所有游戏批量搜刮都未匹配」，优先怀疑 kungal 接口又改了结构（用 curl 打 `/api/search`、`/api/galgame/{gid}` 实测比对）。
+7. **⚠️ kungal HTTP API 已于 2026-09 全站改为需登录，v1.4.6 的直连方案已不可用（v1.5.0 已迁移，勿回退）**：
+   任何匿名 `GET https://www.kungal.com/api/*` 现在都返回 `401 {"code":205,"message":"用户登录失效"}`。
+   **已换成「kungal 网站 SSR 抓取（作品详情）+ NextMoe 开放 API v2（搜索/角色详情）」双数据源**，
+   详见 `doc/v1.5-nextmoe-migration.md`。以下为 v1.4.6 时代的记录，仅作历史参考：
+   搜索/详情接口的 `name` 是普通字符串（不是多语言对象），另有 `name_original`（原名/日文名）；
+   详情 `introduction` 是 `[{lang,intro,machine}]` 数组。
+   **排障提示**：若再遇「所有游戏批量搜刮都未匹配」，优先按新文档检查——
+   ① kungal 网站是否改版导致 `__NUXT_DATA__` 解析失败（日志会打「kungal 网页数据不可用，回退 NextMoe API」）；
+   ② NextMoe 令牌是否失效（日志会打「nextmoe 未登录」或 401）。
 8. **右键菜单触发的导航必须等 `MenuFlyout.Closed` 再执行（v1.4.4，性能红线）**：在 Flyout 的点击处理里（或仅排队一拍）同步执行 `NavigateTo`，页面构建会被卷进菜单关闭动画的病态布局——实测构建耗时从正常的 50-100ms 膨胀到 ~3000ms，且 AppBarButton 本地化文字延迟渲染（宿主 `HomeViewModel.GalFlyOutEdit` 有同款"延迟导航"处理与注释）。正确写法见 `SortPage.EditGame_Click`：记录待办 → 挂一次性 `Closed` 事件 → `Closed` 里再 `InvokeOnMainThread` 导航。左键 `ItemClick` 无此问题，可直接同步导航。
 9. **宿主游玩记录数据流事实（排障必读，v1.4.2 起）**：启动游戏时宿主无条件 `LastPlayTime = DateTime.Now`；`TotalPlayTime/LastPlayTime` 由 `PlayedTime` 字典派生，`MergeTime` 是 max 合并**只增不减**；「删除的记录重启后复活」渠道 = PVN 云同步 pull（游玩时长编辑页的保存**无条件**触发同步任务，不检查同步开关）/ Steam 刷新覆盖 / `.PotatoVN\meta.json` 备份重新入库合并。
 10. **Core Audio 应用会话音量（v1.4.5，音量规范化用，写错必踩坑）**：
@@ -172,6 +180,11 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
     - 触发判定**不要用 `now <= known` 防回退**：消息路+属性路同秒并发会自相矛盾地误拦；改为「LastPlayTime 在最近 2 分钟」+ `InFlight` 去重即可。
     - 匹配进程取 `Process.MainModule?.FileName`（bat 场景记录真实游戏 exe 路径，用于移动检测）；`PlayCount` 只在单次游玩 ≥5 分钟才 +1，故「首次」= `PlayCount==0 && TotalPlayTime<5`。
 11. **kungal 角色中文字段语义与 bgm 抓取定位（角色中文名功能，踩过坑）**：
+    > **v1.5.0 起数据来源已变更**：角色中文名/立绘/剧透来自 kungal 网页的 `roster`
+    > （`localized.zh-Hans`，实测带 `is_machine:false` 的人工翻译），角色简介与外链来自 NextMoe 批量水合。
+    > 下面关于 `/api/galgame-character/{id}` 字段的说明仅作**历史参考**；但"不要用名字是否日文当开关"
+    > 这条教训仍然有效，`KungalPhraser.FetchCharacterIntrosAsync` 的判定逻辑未被改动。
+
     - kungal 角色详情 `/api/galgame-character/{id}` 的 `name` 是**简体中文名**，`name_original` 是日文原名，
       `name_ja` 恒为 null。实测 10/10 与 bgm 角色页「简体中文名」完全一致、`name_original` 与 bgm 日文主名
       逐字一致——**kungal 已镜像 bangumi 角色数据**。但 kungal 并非全本地化：**部分角色（尤其冷门作）只有

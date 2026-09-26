@@ -7,6 +7,7 @@ using GalgameManager.Contracts.Phrase;
 using GalgameManager.Enums;
 using GalgameManager.Models;
 using PotatoVN.App.PluginBase.Helper.Bangumi;
+using PotatoVN.App.PluginBase.Helper.NextMoe;
 using PotatoVN.App.PluginBase.Models;
 
 namespace PotatoVN.App.PluginBase.Helper.Kungal;
@@ -36,7 +37,10 @@ public class KungalPhraser : IGalInfoPhraser
     /// <summary>插件自定义 RssType（须 &gt;100，官方建议随机防冲突）</summary>
     public const int ParserId = 921470;
 
-    private readonly KungalClient _client = new();
+    // 数据源：kungal 匿名 API 于 2026-09 起全部 401（{"code":205,"message":"用户登录失效"}），
+    // 已切到 NextMoe 开放 API v2。NextMoeKungalAdapter 暴露与 KungalClient 完全相同的三个签名，
+    // 本文件匹配与应用逻辑无需改动（work id 与旧 kungal gid 同值，存量 IdForPlugins 无需迁移）。
+    private readonly NextMoeKungalAdapter _client = new();
 
     /// <summary>当前搜刮范围（插件页可修改此实例配置，官方文档允许）</summary>
     public ScrapeFields Fields { get; set; } = ScrapeFields.Description | ScrapeFields.Tags;
@@ -66,7 +70,9 @@ public class KungalPhraser : IGalInfoPhraser
                 // 缺图角色并发下载（反射宿主 DownloadHelper；失败保持默认图，不影响主流程）
                 if (charNeedsImages.Count > 0)
                 {
-                    using var sem = new SemaphoreSlim(4);
+                    // 并发 8：日志实测 11 个缺失角色（含 preview+large 约 22 个文件）在并发 4 下要 7.3s。
+                    // 图片走 image.kungal.iloveren.link（与 API 不同源），不受 NextMoe 令牌桶约束。
+                    using var sem = new SemaphoreSlim(8);
                     var imgTasks = charNeedsImages.Select(async c =>
                     {
                         await sem.WaitAsync();
@@ -92,11 +98,16 @@ public class KungalPhraser : IGalInfoPhraser
     /// </summary>
     internal async Task<(int Gid, KungalDetail Detail)?> FetchDetailAsync(Galgame galgame)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         int? gid = await MatchGidAsync(galgame);
+        long matchMs = sw.ElapsedMilliseconds;
         if (gid == null) return null;
         KungalDetail? detail = await _client.GetDetailAsync(gid.Value);
         if (detail == null) return null;
         galgame.IdForPlugins[ParserId] = gid.Value.ToString();
+        // 耗时分解（诊断用）：详情若接近 0ms 说明命中了 adapter 的短缓存
+        Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+            $"kungal 耗时: gid={gid} 匹配={matchMs}ms 详情={sw.ElapsedMilliseconds - matchMs}ms");
         return (gid.Value, detail);
     }
 
@@ -267,9 +278,18 @@ public class KungalPhraser : IGalInfoPhraser
         var cards = detail.Characters.Where(c => c.Spoiler <= 0).ToList(); // 剧透角色整条跳过
         if (cards.Count == 0) return (result, renamed, addedChars, needsImages);
 
-        // 并发拉取全部角色详情（HttpClient 异步 IO 不占线程；每请求 200ms 节流同时生效）
-        KungalCharacter?[] details = await Task.WhenAll(
-            cards.Select(c => _client.GetCharacterAsync(c.Id)));
+        // 角色详情走**批量水合**（NextMoe 的 ids= 车道，一次最多 100 个，adapter 内部自动分片）：
+        // 实测 20 个角色 1 请求 / 0.77s，而逐个发是 20 个请求、每个还要过令牌桶排队——
+        // 这正是原来「详情到手后卡 17~25 秒」的主因。不要改回 Task.WhenAll 逐个拉。
+        var swChars = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyDictionary<int, KungalCharacter> charMap =
+            await _client.GetCharactersAsync(cards.Select(c => c.Id));
+        KungalCharacter?[] details = cards
+            .Select(c => charMap.TryGetValue(c.Id, out KungalCharacter kc) ? kc : null)
+            .ToArray();
+        swChars.Stop();
+        Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+            $"kungal 角色详情: {cards.Count} 个批量水合耗时 {swChars.ElapsedMilliseconds}ms");
         var kcs = details.Where(k => k != null).Cast<KungalCharacter>().ToList();
         if (kcs.Count == 0) return (result, renamed, addedChars, needsImages);
 
@@ -282,7 +302,10 @@ public class KungalPhraser : IGalInfoPhraser
         //    取「简体中文名」（bgm 收录译名更权威）。注意 characters API 的 infobox **不含**简体中文名
         //    （实测只在网页 HTML），必须经网页抓。
         // 需带 token：bgm v0 /subjects 对 R18 条目（galgame 绝大多数）匿名 404，token 全量可见（宿主 Bangumi OAuth）。
-        var bgmClient = new BgmClient { Token = await HostServices.GetBgmTokenAsync() };
+        var swBgm = System.Diagnostics.Stopwatch.StartNew();
+        string? bgmToken = await GetBgmTokenCachedAsync();
+        long bgmTokenMs = swBgm.ElapsedMilliseconds;
+        var bgmClient = new BgmClient { Token = bgmToken };
         var kungalCn = new Dictionary<int, string>(); // kcs 索引 → 简体中文名（最终解析结果）
         var bgmAuthoritative = new HashSet<int>();    // 中文名来自 bgm（网页抓取）的角色：bgm 权威，可覆盖错误中文名
         bool anyUnresolved = false;                    // 存在「未直接取到 kungal 中文名」的角色 → 可能需要 bgm
@@ -306,13 +329,15 @@ public class KungalPhraser : IGalInfoPhraser
             // 带 token 拉整游戏 bgm 角色列表一次（R18 条目匿名 404，token 全量可见）；失败则跳过兜底。
             // 此接口 infobox 不含「简体中文名」（实测只在角色网页 HTML），只拿 (角色id, 角色名)，
             // 简体中文名随后对命中的角色 id 抓网页解析。
+            long bgmListMs = swBgm.ElapsedMilliseconds;
             foreach (var (charId, bgmName) in await bgmClient.GetSubjectCharactersAsync(subjectId))
             {
                 string? key = NormalizeName(bgmName);
                 if (key != null) bgmCharIdByName[key] = charId;
             }
             Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
-                $"角色中文名·bgm兜底: subject={subjectId} 拉到角色 {bgmCharIdByName.Count} 个");
+                $"角色中文名·bgm兜底: subject={subjectId} 拉到角色 {bgmCharIdByName.Count} 个 " +
+                $"(取token={bgmTokenMs}ms 拉角色列表={swBgm.ElapsedMilliseconds - bgmListMs}ms)");
         }
         else if (anyUnresolved)
         {
@@ -373,11 +398,12 @@ public class KungalPhraser : IGalInfoPhraser
 
         // 抓每个待查 bgm 角色的网页取简体中文名（网页是唯一可靠来源；匿名可访问，勿用会 404 的 API）。
         // 按 bgm 角色 id 去重，避免同一角色被多条匹配重复请求。
-        using (var sem = new SemaphoreSlim(3)) // 网页服务礼貌限流
+        using (var sem = new SemaphoreSlim(6)) // 网页服务限流：原本 3，日志实测一批要 9.8s，提到 6 减半；每请求另有 PageRequestDelay(500ms) 兜底
         {
             var distinct = needScrape.GroupBy(x => x.BgmId)
                 .Select(g => (g.Key, g.First().Ki)).ToList();
             var scrapeMap = new Dictionary<int, string>();
+            var swScrape = System.Diagnostics.Stopwatch.StartNew();
             var tasks = distinct.Select(async n =>
             {
                 await sem.WaitAsync();
@@ -392,6 +418,9 @@ public class KungalPhraser : IGalInfoPhraser
                 }
             });
             await Task.WhenAll(tasks);
+            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                $"角色中文名·bgm网页抓取: {distinct.Count} 个（并发上限 6）耗时 {swScrape.ElapsedMilliseconds}ms，" +
+                $"命中 {scrapeMap.Count} 个");
             foreach (var (bgmId, ki) in needScrape)
                 if (scrapeMap.TryGetValue(bgmId, out string? cn) && !string.IsNullOrWhiteSpace(cn))
                 {
@@ -701,6 +730,10 @@ public class KungalPhraser : IGalInfoPhraser
                 if (byVndb is not { Items.Count: > 0 }) continue;
                 foreach (KungalCard candidate in byVndb.Items.Take(3))
                 {
+                    // refs 精确反查命中唯一候选：服务端已按外部 id 匹配，可直接采信，
+                    // 省掉一次全量详情请求（NextMoe 单请求 RTT ≈1s，最多省 3 次）。
+                    if (candidate.ExactRefMatch) return candidate.Id;
+
                     KungalDetail? candDetail = await _client.GetDetailAsync(candidate.Id);
                     if (candDetail?.VndbId != null &&
                         NormalizeVndb(candDetail.VndbId) == NormalizeVndb(vndbId))
@@ -730,7 +763,33 @@ public class KungalPhraser : IGalInfoPhraser
             }
         }
 
+        // 走到这里说明三个途径都没命中。若是因为未登录（搜索走 NextMoe，无令牌即 401），
+        // 必须给一句明确提示——否则用户只看到"没匹配到"，完全不知道为什么。
+        // 注意：有 gid 记忆的老游戏在第一层就返回了，不受影响；只有新游戏会卡在这里。
+        if (!NextMoeSession.Instance.IsLoggedIn)
+        {
+            Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning,
+                $"未登录 NextMoe，无法为《{galgame.Name.Value}》匹配新条目" +
+                "（搜索按名称/vndb id 反查需要令牌；详情与标签本身是走 kungal 网页、不需要登录）。" +
+                "请在游戏库页「更多」→「登录 NextMoe 账号（搜刮数据源）」完成一次授权；" +
+                "已搜刮过的游戏有 ID 记忆，不受此影响。");
+        }
+
         return null;
+    }
+
+    private static string? _bgmTokenCache;
+
+    /// <summary>
+    /// 带缓存的 bgm token 读取。token 在一次会话内基本不变，而每次反射读取都有开销
+    /// （GetService → ReadSettingAsync → JSON 反序列化 BgmAccount）；
+    /// 批量搜刮每款游戏各读一次是纯浪费。失败（null）不缓存，下次仍会重试。
+    /// </summary>
+    private static async Task<string?> GetBgmTokenCachedAsync()
+    {
+        if (_bgmTokenCache != null) return _bgmTokenCache;
+        _bgmTokenCache = await HostServices.GetBgmTokenAsync();
+        return _bgmTokenCache;
     }
 
     /// <summary>字符集重叠率（Dice 系数）：对词序/翻译差异免疫，如「后宫双子洛丽塔」与「双子洛丽塔后宫」=1.0</summary>
