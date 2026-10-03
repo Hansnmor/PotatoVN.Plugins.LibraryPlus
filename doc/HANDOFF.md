@@ -1,7 +1,22 @@
 # LibraryPlus 插件接手开发指南（HANDOFF）
 
 > 本文档面向**新接手的 AI**：读这一篇就能一条龙走完「理解项目 → 开发 → 构建调试 → 提交 → 发布」。
-> 当前版本：v1.4.6。仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
+> 仓库：https://github.com/Hansnmor/PotatoVN.Plugins.LibraryPlus （分支 main）
+>
+> **版本号以 `PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj` 的 `<Version>` 为唯一权威**（git tag 与之对齐）。
+> 本文档**不复写「当前版本」**——历史教训：分散记录必然漂移（曾同时出现「文档头部 v1.4.6 / §3 标题 v1.4.0 / csproj 1.5.0」）。
+> §3 各条末尾的 `（vX.Y.Z）` 是该功能**落地版本**的历史事实，可以保留；「当前版本」一律看 csproj。
+> 同理，**每条会漂移的环境或接口结论都带核对日期**；结论被推翻时不要删，移到文末附录（保留"当初为什么这么判断"）。
+>
+> **文档地图**：
+> - `doc/HANDOFF.md`（本篇）= 上手路线 · 项目结构 · 构建/提交/发布流程 · 开发红线
+> - `doc/v1.5-nextmoe-migration.md` = 数据源从 kungal API 迁到「kungal 网页 SSR + NextMoe API」的变更说明
+> - `doc/PLAN-kungal-data-source.md` = kungal 数据源/评分融合的原始设计
+> - `doc/search-issue.md` = 搜索框专项排查史（**只在要动搜索框时读**，§8.5 是定稿）
+> - `doc/FEATURE-REVIEW-nextmoe.md` = 16 项功能「能否用 NextMoe 新办法实现」的评估（人话版）
+> - `doc/REFACTOR-nextmoe-era.md` = 工程版重构评估（逐文件分类 · 目标架构 · 分阶段顺序 · 红线）
+> - 官方脚手架文档：`doc/main.md`（必读第一份）及 `doc/ui.md` / `sidebar.md` / `dialog.md` / `data.md` / `parser.md`
+> - 文末**附录：已失效的历史结论** = 仅作考古，不要照抄
 
 ---
 
@@ -15,8 +30,11 @@
    - `doc/data.md` — 插件数据持久化
    - `doc/parser.md` — 搜刮器（IParserProvider）
 3. **本仓库自有设计文档**（与官方文档同目录，按需读）：
+   - `doc/v1.5-nextmoe-migration.md` — 数据源从 kungal HTTP API 迁到「kungal 网页 SSR + NextMoe API」的变更说明
    - `doc/PLAN-kungal-data-source.md` — kungal 数据源/评分融合的原始设计
    - `doc/search-issue.md` — 搜索框完整排查史（**只在要动搜索框时读**，§8.5 是最终形态定稿）
+   - `doc/FEATURE-REVIEW-nextmoe.md` / `doc/REFACTOR-nextmoe-era.md` — 「哪些功能能用 NextMoe 新办法做」的评估（人话版 / 工程版），评估结论未落地前先读这两份再动手
+   - 文末**附录：已失效的历史结论** — 已被推翻的结论，仅作考古
 4. **宿主源码**：`PotatoVN/GalgameManager`（submodule，只读参考；内部实现细节、反编译资料见宿主仓库文档 `PotatoVN/.kilocode/rules/project-info-galgamemanager.md`）。
 
 > 理解宿主 View 层结构（详情页、主页搜索框等）时，可参考本机反编译资料 `E:\_Code\_hansnmor\_WORKSPACE\deepseek harness\_workspace\_decompile\`（搜索定位用，非仓库内容）。
@@ -54,7 +72,9 @@
 
 ---
 
-## 3. 已开发功能总结（v1.4.0）
+## 3. 已开发功能总结
+
+> 按功能域排列（**不按版本堆叠**——逐版本变更看 `git log` 与 GitHub release notes）；每条只写「是什么 · 入口在哪 · 数据来自哪」，实现细节见代码注释与对应文档。条末 `（vX.Y.Z）` 是落地版本。
 
 ### 3.1 Kungal 搜刮器（IParserProvider）
 - `ParserId = 921470`；从 kungal.com 搜刮游戏信息（中文简介、标签、角色、评分等）。
@@ -128,6 +148,23 @@
 - **分类日志静默**：`ClassifyContent` 加 `silent` 参数——列表筛选/统计（刷新全库遍历）传 true，
   不再每次点分类刷「分类[拔作]」日志；默认 false 保留诊断（批量搜刮后核对命中路径用）。
 
+### 3.10 网络与缓存健壮性（2026-10-03）
+
+- **修复「搜刮慢」的根因（本轮收益最大）**：`KungalWebClient` 与 `NextMoeClient` 原先都写死
+  `UseProxy = false`，但实测 kungal 直连已断（每次干等满 40 秒超时再回退 NextMoe）、NextMoe 直连慢 3~4 倍
+  且抖动大 → 两者改为**跟随系统代理**（环境细节见 §5 第 11 条内的「环境」小节）。实测：单款游戏 ~25s → **~4s**；
+  11 个角色批量水合 22.3s → **~1.2s**；kungal 网页抓取 40s 超时失败 → **1.9~2.6s 成功**。
+- **评分缓存加了有效期**（`Helper/RatingCachePolicy.cs`）：有评分 30 天、「无评分」7 天。缓存命中时先显示旧值
+  （不闪、不阻塞），过期则同时后台重拉自愈；批量计算评分改为「只跳过**仍新鲜**的」，不再被「当时没评分」的
+  负缓存永久拦住。
+- **新增「更多」→「清理评分缓存…」**：补上缺失的用户出口（以前只能靠删插件数据）。
+- **导入备份不再被版本号卡死**：原判据是 `schema != SchemaVersion` 硬等值，日后一升版本号**所有老备份会被
+  整体拒收**；现改为「只拒收比当前更新的备份」，并兜底补空集合、导入完成时提示实际导入条数。
+- **宿主反射失败留日志**：7 处静默 `catch{}` 现在会打一次「宿主接口反射失败: XxxAsync()」（同一处只报一次、
+  **不改变任何行为**）——宿主改内部接口时不再出现「功能悄悄消失、日志无痕迹」。
+- 其它小修：形态轴改用独立 `FormKeyAll` 常量（原先借用内容轴常量，只是恰好都是 "All"）；
+  宿主外部 id 改用 `Ids[(int)RssType.Vndb/Bangumi]` 并加越界检查；NextMoe 角色批量记录 `missing[]`。
+
 ---
 
 ## 4. 构建与调试
@@ -159,14 +196,12 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
    - `CommandBarLabelPosition` 枚举只有 Default/Collapsed（宿主 WinUI 较旧）。
 3. **不能使用 `DispatcherQueue`**（宿主 WinUI 太旧会 MissingMethodException）；跨线程回 UI 用 `Plugin.HostApi.InvokeOnMainThread`。
 4. **XAML 中别用 `IsChecked` 字面量**（旧 WinUI XamlParseException）；图标用 `FontIcon Glyph`（Symbol 枚举可能缺成员）。
-5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`（当前 1.5.0），与 GitHub tag 对齐。
+5. **版本号**：改 `PotatoVN.App.PluginBase.csproj` 的 `<Version>`，与 GitHub tag 对齐。**本文档不复写当前版本号**（以 csproj 为唯一权威，避免多处漂移）。
 6. 搜刮器/评分 API 细节（VNDB 匿名 POST、Bangumi v1 匿名可拿 R18、host token 经 `HostServices.GetBgmTokenAsync()`）见对应 Helper 文件头注释。
 7. **⚠️ kungal HTTP API 已于 2026-09 全站改为需登录，v1.4.6 的直连方案已不可用（v1.5.0 已迁移，勿回退）**：
    任何匿名 `GET https://www.kungal.com/api/*` 现在都返回 `401 {"code":205,"message":"用户登录失效"}`。
    **已换成「kungal 网站 SSR 抓取（作品详情）+ NextMoe 开放 API v2（搜索/角色详情）」双数据源**，
-   详见 `doc/v1.5-nextmoe-migration.md`。以下为 v1.4.6 时代的记录，仅作历史参考：
-   搜索/详情接口的 `name` 是普通字符串（不是多语言对象），另有 `name_original`（原名/日文名）；
-   详情 `introduction` 是 `[{lang,intro,machine}]` 数组。
+   详见 `doc/v1.5-nextmoe-migration.md`；v1.4.6 时代的接口字段记录已移到文末附录「已失效的历史结论」。
    **排障提示**：若再遇「所有游戏批量搜刮都未匹配」，优先按新文档检查——
    ① kungal 网站是否改版导致 `__NUXT_DATA__` 解析失败（日志会打「kungal 网页数据不可用，回退 NextMoe API」）；
    ② NextMoe 令牌是否失效（日志会打「nextmoe 未登录」或 401）。
@@ -179,17 +214,12 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
     - **RCW 释放纪律**：所有 `Marshal.ReleaseComObject` 必须 try-catch + 置空（`ReleaseSafe(ref x)`），且在 finally 里抛 `InvalidComObjectException` 会逃过方法内 catch 冒泡到调用方——曾因此「压一次成功却报处理异常」。
     - 触发判定**不要用 `now <= known` 防回退**：消息路+属性路同秒并发会自相矛盾地误拦；改为「LastPlayTime 在最近 2 分钟」+ `InFlight` 去重即可。
     - 匹配进程取 `Process.MainModule?.FileName`（bat 场景记录真实游戏 exe 路径，用于移动检测）；`PlayCount` 只在单次游玩 ≥5 分钟才 +1，故「首次」= `PlayCount==0 && TotalPlayTime<5`。
-11. **kungal 角色中文字段语义与 bgm 抓取定位（角色中文名功能，踩过坑）**：
+11. **角色中文名口径与 bgm 抓取定位（角色中文名功能，踩过坑）**：
     > **v1.5.0 起数据来源已变更**：角色中文名/立绘/剧透来自 kungal 网页的 `roster`
     > （`localized.zh-Hans`，实测带 `is_machine:false` 的人工翻译），角色简介与外链来自 NextMoe 批量水合。
-    > 下面关于 `/api/galgame-character/{id}` 字段的说明仅作**历史参考**；但"不要用名字是否日文当开关"
-    > 这条教训仍然有效，`KungalPhraser.FetchCharacterIntrosAsync` 的判定逻辑未被改动。
+    > `/api/galgame-character/{id}` 的字段语义**已失效**，原文见文末附录「已失效的历史结论」；
+    > 但"不要用名字是否日文当开关"这条教训**仍然有效**，`KungalPhraser.FetchCharacterIntrosAsync` 的判定逻辑未被改动。
 
-    - kungal 角色详情 `/api/galgame-character/{id}` 的 `name` 是**简体中文名**，`name_original` 是日文原名，
-      `name_ja` 恒为 null。实测 10/10 与 bgm 角色页「简体中文名」完全一致、`name_original` 与 bgm 日文主名
-      逐字一致——**kungal 已镜像 bangumi 角色数据**。但 kungal 并非全本地化：**部分角色（尤其冷门作）只有
-      vndb 链接、无 bgm 链接，kungal 给的中文译名可能与 bgm 不一致**（实例：轮舞曲Duo「神埼 イツキ」，
-      kungal 给「神埼树」，bgm 收录的是另一译名，两者不同）。
     - **不要把「名字是否日文」当开关**：旧代码用 `IsJapaneseName(kc.Name)` 决定要不要抓 bgm，kungal 把中文名
       填进 `name` 后该判定恒为 false → bgm 抓取被整体跳过、`cn` 恒 null、改名条件不成立，
       **功能静默失效（不报错、不打日志，只能看到"中文名没了"）**。
@@ -216,12 +246,8 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
       `id`(bgm 角色 id)、`name`(主名，多为日文)、`infobox`(key-value 数组，但**不含**简体中文名，别指望它)。
       简体中文名只能抓 `bgm.tv/character/{cid}` 网页。bgm subject 搜索对罗马字/中文标题分词不友好，
       定位条目优先用库里已存的 subject id，别依赖搜索。
-    - 环境：**`bgm.tv` / `api.bgm.tv` 在本机直连必然超时**（DNS 被污染，解析到 `2a03:2880::/32`、
-      `31.13.64.0/18` 等非真实地址），必须走 Clash 系统代理（`127.0.0.1:7889`）。
-      规律：kungal 直连可达，bgm 必须走代理。
-    - **排障坑**：本机 Bash 环境自带 `http_proxy/https_proxy=127.0.0.1:3327`（沙箱代理），
-      Python urllib / curl 默认会走它 → 用它测 bgm.tv 会得到**假阴性**（全超时，极易误判为"bgm 挂了"、
-      "正则失效"）。测外网必须显式 `curl -x http://127.0.0.1:7889`，或用 `--noproxy '*'` 做对照。
+    - 本机网络/代理环境已**独立成条**（见本节第 12 条）——kungal / NextMoe / bgm 三家的直连可用性各自变过，
+      改动网络相关代码前务必先看那条。
     - **bgm subject 是 R18 时匿名搜索也常查不到**（如轮舞曲Duo 116779）：搜「輪舞曲/Rondo/Duo」等均无结果、
       匿名 `GET /v0/subjects/116779` 返回 404，但网页 `bgm.tv/subject/116779` 是 200——条目真实存在，
       只是被 R18 + 匿名限制隐藏，别据此误判"bgm 没收录"。
@@ -236,6 +262,29 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
       | 游戏级 `Ids[Bangumi]` 是 subject id | 兜底跳过 | 日志可见 |
       **kungal 又改结构时的快速排查**：tools/ 下跑 `probe_cnname_rate.py`（看 name 是否仍为中文）+ 对比
       `name/name_original/name_ja` 实际取值；然后看宿主日志「角色中文名解析」行判断断在哪一层。
+
+12. **本机网络与代理环境（2026-10-03 实测，旧结论已变，别再照抄）**：
+    - **三个客户端一律跟随系统代理，不要写 `UseProxy = false`**。系统代理 = Clash，实测端口是
+      **`127.0.0.1:8888`**（旧文档写的 7889 已不通；`ProxyEnable` 在注册表 Internet Settings 里查）。
+    - `www.kungal.com`：**直连已在 TLS 握手阶段必超时（20s+）**，必须走代理（代理 1.9~2.3s 返回 200）。
+      迁移期「kungal 直连可达」的结论已失效——`KungalWebClient` 因此曾每次干等满 40s 超时再回退 NextMoe，
+      丢掉类型投票、tag 剧透与 roster 立绘（批量搜刮尤其致命）。
+    - `api.nextmoe.dev`：直连**可用但慢 3~4 倍且抖动大**（同一请求 0.95s / 6.23s，偶发握手卡死），
+      走代理 0.67~1.6s 且稳定。`NextMoeClient` 原写死 `UseProxy = false`，实测导致
+      「11 个角色批量水合耗时 22296ms」这类 20 秒级尖刺。
+    - `bgm.tv` / `api.bgm.tv`：直连必然超时（DNS 被污染，解析到 `2a03:2880::/32`、`31.13.64.0/18`
+      等非真实地址），必须走代理。`BgmClient` 一直是对的。
+    - 跟随系统代理的好处：Clash 开着走代理、关掉（`ProxyEnable=0`）自动回直连，不会把某一次的网络观测写死。
+    - **排障坑**：本机 Bash 环境自带 `http_proxy/https_proxy=127.0.0.1:3327`（沙箱代理），
+      Python urllib / curl 默认会走它 → 用它测 bgm.tv 会得到**假阴性**（全超时，极易误判为"bgm 挂了"、
+      "正则失效"）。测外网请显式指定 `curl -x http://127.0.0.1:8888`，或用 `--noproxy '*'` 做对照。
+      另：`api.nextmoe.dev` 对**默认 Python UA 返回 403**，测它必须带浏览器 UA。
+
+13. **网络策略：任何客户端都不要写死 `UseProxy`**（2026-10-03 的教训，见 §3.10）。kungal / NextMoe / bgm
+    三家的直连可用性**各自变过、而且互相相反**（见本节第 12 条）。写死的结果是
+    「从某天起搜刮奇慢或全失败，但代码看起来毫无问题」——本轮单款游戏从 ~25 秒降到 ~4 秒就靠这一条。
+    一律**跟随系统代理**：Clash 开着走代理、关掉（`ProxyEnable=0`）自动回直连。改完用宿主日志核对单款耗时
+    （正常应在 2~5 秒；若出现「kungal 网页抓取异常 ... Timeout of 40 seconds」，就是又被写死成直连了）。
 
 ---
 
@@ -310,4 +359,47 @@ curl.exe -s -X POST -H "Authorization: Bearer $tok" -H "Accept: application/vnd.
 4. 确认功能 → `git add -A` → 中文功能清单 commit（`-F` 文件）→ `git push origin main`。
 5. 升版本：csproj `<Version>` → `git tag vX.Y.Z` → `git push origin vX.Y.Z`。
 6. Release 构建 → 校验 `artifacts/plugin.pvnplugin.zip` → API 建 release + 上传 zip（§7）。
-7. 收尾：清理临时文件，更新本文档（功能清单、版本号、注意事项如有新增）。
+7. 收尾：清理临时文件；如有新增功能/红线/环境结论，更新本文档——**不写版本号**（版本只在 csproj），
+   会漂移的结论**带核对日期**，被推翻的结论移入下面的附录而不是删掉。
+
+---
+
+## 附录：已失效的历史结论（仅作考古，不要照抄）
+
+> 这些结论在写下时都成立、且当时有实测依据，但**已被上游变更推翻**。
+> 保留它们的用意：让接手者理解"当初为什么这么写"，避免重复验证同一个问题、或误以为某条现状是 bug。
+> 每条都标注失效方向与失效时间。
+
+### A. kungal 搜索/详情 HTTP API 的字段形状（2026-09 起失效）
+
+失效原因：kungal 全站 API 改为需登录（匿名一律 `401 code:205`），v1.5.0 已迁移到「kungal 网页 SSR + NextMoe API」。
+现行方案见 §3 / `doc/v1.5-nextmoe-migration.md`；以下是 v1.4.6 时代的记录：
+
+- 搜索/详情接口的 `name` 是普通字符串（不是多语言对象），另有 `name_original`（原名/日文名）。
+- 详情 `introduction` 是 `[{lang,intro,machine}]` 数组。
+
+### B. kungal 角色接口 `/api/galgame-character/{id}` 的字段语义（2026-09 起失效）
+
+失效原因：同 A（接口已需登录）；且 v1.5.0 起角色的中文名/立绘/剧透改由 kungal 网页 `roster`
+的 `localized.zh-Hans` 提供。以下是 v1.4.6 时代的记录（**其中的教训仍然有效**，见 §5 第 11 条）：
+
+- `name` 是**简体中文名**，`name_original` 是日文原名，`name_ja` 恒为 null。实测 10/10 与 bgm 角色页
+  「简体中文名」完全一致、`name_original` 与 bgm 日文主名逐字一致——**kungal 已镜像 bangumi 角色数据**。
+  但 kungal 并非全本地化：**部分角色（尤其冷门作）只有 vndb 链接、无 bgm 链接，kungal 给的中文译名
+  可能与 bgm 不一致**（实例：轮舞曲Duo「神埼 イツキ」，kungal 给「神埼树」，bgm 收录的是另一译名）。
+- **不要用「名字是否日文」当开关**：把中文名填进 `name` 后，`IsJapaneseName(kc.Name)` 判定恒为 false，
+  整条 bgm 抓取会被静默跳过（不报错、不打日志，只表现为"中文名没了"）。这条教训在
+  `KungalPhraser.FetchCharacterIntrosAsync` 里仍然适用。
+- **纯汉字日文名不含假名**，`IsJapaneseName` 判不出来（如「沢渡真琴」「水瀬名雪」，中文圈库里很常见）；
+  判断"库内角色名是否日文形态"统一走 `IsJapaneseLikeName`：含假名 **或** 与 kungal 的
+  `name_original`/`name_ja` 完全相同（后者专门覆盖纯汉字场景）。
+
+### C. 网络直连可用性（2026-10-03 起失效）
+
+- 失效记录：**「kungal 直连可达」**——迁移期（2026-09）实测直连 1.2~2.6s 返回 200，因此
+  `KungalWebClient` 与 `NextMoeClient` 都写死了 `UseProxy = false`；2026-10-03 复测发现 kungal
+  直连已在 TLS 握手阶段必超时（每次干等满 40s 超时再回退），NextMoe 直连慢 3~4 倍且抖动。
+  现行口径见 §5 第 12 条与 §3.10。
+- 失效记录：**旧文档写的 Clash 代理端口 `127.0.0.1:7889`**——2026-10-03 实测已不通，实际是
+  `127.0.0.1:8888`（以注册表 `Internet Settings\ProxyServer` 为准）。
+
