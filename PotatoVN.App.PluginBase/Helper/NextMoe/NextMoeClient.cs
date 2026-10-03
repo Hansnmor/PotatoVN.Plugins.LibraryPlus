@@ -79,12 +79,17 @@ internal class NextMoeClient
         {
             AllowAutoRedirect = true,
             AutomaticDecompression = System.Net.DecompressionMethods.All,
-            // 刻意绕过系统代理。api.nextmoe.dev 直连可用（本机实测 1.07s / http=200），
-            // 而走系统代理（Clash 127.0.0.1:8888）要 1.99s —— 每请求多花约 1 秒，
-            // 一次搜刮几十个请求会被放大成几十秒。
-            // 注意 bgm.tv 情况相反（本机直连会超时，必须走代理），所以只在本类绕开，不要动 BgmClient。
-            // 若某天直连不通，把本行改成 UseProxy = true（或删掉）即恢复走系统代理。
-            UseProxy = false,
+            // 跟随系统代理（默认行为），**不要写 UseProxy = false**（2026-10-03 实测后改回）：
+            // 迁移期（2026-09）直连确实略快（当时实测 1.07s vs 代理 1.99s），但现在反过来了，
+            // 且直连抖动极大——同一请求各打两次的实测（2026-10-03）：
+            //   /catalog/stats                        直连 0.95s / 6.23s   代理 1.12s / 0.67s
+            //   作品详情（本插件同款 include）        直连 5.59s / 2.40s   代理 1.57s / 0.92s
+            //   角色批量水合 21 个 id（同款 include） 直连 5.99s / 1.55s   代理 1.51s / 0.90s
+            // 直连还会偶发 TLS 握手卡死（多次复现），后果是宿主日志里的 20 秒级尖刺
+            // （实例：「kungal 角色详情: 11 个批量水合耗时 22296ms」——那是一个请求的耗时：
+            //  11 个 id 在 GetCharactersAsync 里只发 1 次 ids= 批量请求，不是 N+1）。
+            // 跟随系统代理则 Clash 开着走代理、关掉（ProxyEnable=0）自动回直连，自适应两种环境。
+            // BgmClient 早有同款结论（bgm.tv 直连必超时）；KungalWebClient 2026-10-03 同样改为跟随系统代理。
         };
         var client = new HttpClient(handler);
         client.DefaultRequestHeaders.UserAgent.ParseAdd(

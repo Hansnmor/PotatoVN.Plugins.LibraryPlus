@@ -63,8 +63,15 @@ internal class KungalWebClient
         {
             AllowAutoRedirect = true,
             AutomaticDecompression = System.Net.DecompressionMethods.All,
-            // kungal 直连可用且更快（实测直连 1.2~2.6s 返回 200）→ 绕开系统代理。
-            UseProxy = false,
+            // 跟随系统代理（默认行为），**不要写 UseProxy = false**：
+            // kungal 的直连可用性会变。2026-09 迁移时直连尚可（1.2~2.6s 返回 200），
+            // 但 2026-10-03 实测直连在 TLS 握手阶段必超时（TCP+TLS 20s+ 无响应、HTTP 恒失败），
+            // 走 Clash（系统代理 127.0.0.1:8888）则 1.9~2.3s 返回 200、__NUXT_DATA__ 与
+            // api:work:{gid}:nsfw / api:work-ratings:{gid} 全在。
+            // 写死 false 的代价：每次抓取先干等满 Timeout(40s) 再失败并回退 NextMoe，
+            // 丢掉类型投票（分类第③步）、tag 的 spoiler 与 roster 立绘——批量搜刮尤其致命。
+            // 跟随系统代理则 Clash 开着走代理、关掉（ProxyEnable=0）自动回直连，不会把
+            // 某一次的网络观测固化成永久行为（NextMoeClient 情况相反：直连可用，故那边保留 false）。
         };
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(40) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd(
