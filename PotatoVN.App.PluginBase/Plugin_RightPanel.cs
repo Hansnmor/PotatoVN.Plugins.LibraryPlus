@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using GalgameManager.Enums;
 using GalgameManager.Models;
 using GalgameManager.WinApp.Base.Contracts.PluginUi;
 using Microsoft.UI.Xaml;
@@ -72,8 +73,8 @@ public partial class Plugin
         // 缓存命中（含重启后的落盘缓存）→ 立即显示，零网络
         if (TryFillFromCache(game, scoreText, detailText))
         {
-            // 缓存命中但 bangumi 缺失（kungal 侧缺/旧缓存）→ 后台补拉增强，成功后刷新卡片为双源
-            if (CacheMissingBgm(game))
+            // ① bangumi 分缺失（kungal 侧缺/旧缓存）② 缓存已过期（含「无评分」负缓存）→ 后台补拉自愈
+            if (ShouldRefreshInBackground(game))
                 _ = FetchAndFillAsync(game, scoreText, detailText);
             return Task.FromResult<FrameworkElement>(card);
         }
@@ -85,12 +86,17 @@ public partial class Plugin
         return Task.FromResult<FrameworkElement>(card);
     }
 
-    /// <summary>缓存中该游戏的 bangumi 评分缺失且游戏有 bgm id（可补拉增强）。</summary>
-    private static bool CacheMissingBgm(Galgame game)
+    /// <summary>
+    /// 缓存命中但仍值得后台重拉：
+    /// ① 缓存已过期（含「无评分」负缓存）——修掉「当时没评分就永远显示暂无」的老问题；
+    /// ② 缓存里 bangumi 分缺失且游戏有 bgm id（可补拉增强，保持原有行为）。
+    /// </summary>
+    private static bool ShouldRefreshInBackground(Galgame game)
     {
-        if (!Plugin.Data.RatingCache.TryGetValue(game.Uuid.ToString(), out var rating)) return false;
-        if (rating.BgmScore > 0) return false;
-        return GetBgmId(game) > 0;
+        if (!Plugin.Data.RatingCache.TryGetValue(game.Uuid.ToString(), out RatingData? rating)) return false;
+        if (rating is null) return false;
+        if (!RatingCachePolicy.IsFresh(rating)) return true;
+        return rating.BgmScore <= 0 && GetBgmId(game) > 0;
     }
 
     /// <summary>取主题画刷（缺失返回 null，Border 透明显示）。</summary>
@@ -143,7 +149,8 @@ public partial class Plugin
         if (!Plugin.Data.RatingCache.TryGetValue(game.Uuid.ToString(), out var rating)) return false;
         if (rating.BgmScore <= 0 && rating.VndbScore <= 0)
         {
-            // 已缓存「无评分」（批量算过/拉取失败过）→ 直接显示暂无，不再重拉
+            // 已缓存「无评分」（批量算过/当时上游没有）→ 先显示暂无；若该负缓存已过期，
+            // 调用方（CreateRightPanelUiAsync）会同时安排一次后台重拉自愈。
             scoreText.Text = "—";
             detailText.Text = "暂无评分数据";
             return true;
@@ -190,12 +197,16 @@ public partial class Plugin
         return rating;
     }
 
-    /// <summary>后台拉取两站评分并填充卡片（每个游戏首次进详情页时执行一次）。</summary>
+    /// <summary>
+    /// 后台拉取两站评分并填充卡片（每个游戏首次进详情页、或缓存已过期时执行一次）。
+    /// 注意这里是 force 拉取：<see cref="FetchRatingAsync"/> 默认见到缓存就直接返回，
+    /// 而本方法只在「缓存不存在」或「<see cref="ShouldRefreshInBackground"/> 判定需要刷新」时被调用。
+    /// </summary>
     private static async Task FetchAndFillAsync(Galgame game, TextBlock scoreText, TextBlock detailText)
     {
         try
         {
-            RatingData? rating = await FetchRatingAsync(game);
+            RatingData? rating = await FetchRatingAsync(game, force: true);
             Plugin.HostApi.InvokeOnMainThread(() =>
             {
                 if (rating is null || (rating.BgmScore <= 0 && rating.VndbScore <= 0))
@@ -256,24 +267,33 @@ public partial class Plugin
             : $"{detail}（仅{(hasBgm ? "bangumi" : "vndb")}）";
     }
 
-    /// <summary>VNDB id：优先 kungal 数据（"v5940" 格式），其次 Galgame.Ids[0]（纯数字，归一化补 v）。</summary>
+    /// <summary>VNDB id：优先 kungal 数据（"v5940" 格式），其次宿主 Ids[RssType.Vndb]（纯数字，下游自动补 v）。</summary>
     private static string? GetVndbId(Galgame game)
     {
         if (Plugin.Data.KungalData.TryGetValue(game.Uuid.ToString(), out var kungal) &&
             !string.IsNullOrWhiteSpace(kungal.VndbId))
             return kungal.VndbId;
-        string?[]? ids = game.Ids;
-        if (ids is not null && ids.Length > 0 && !string.IsNullOrWhiteSpace(ids[0]))
-            return ids[0];
-        return null;
+        return GetHostId(game, RssType.Vndb);
     }
 
-    /// <summary>bangumi subject id（Galgame.Ids[1]）。</summary>
+    /// <summary>bangumi subject id（宿主 Ids[RssType.Bangumi]）</summary>
     private static int GetBgmId(Galgame game)
     {
+        string? raw = GetHostId(game, RssType.Bangumi);
+        return raw is not null && int.TryParse(raw, out int bgmId) ? bgmId : 0;
+    }
+
+    /// <summary>
+    /// 读宿主 <c>Galgame.Ids</c> 里某个源的外部 id。
+    /// 用 <see cref="RssType"/> 下标而不是字面量 0/1：宿主枚举顺序一旦调整，字面量会静默取到别的源。
+    /// </summary>
+    private static string? GetHostId(Galgame game, RssType source)
+    {
         string?[]? ids = game.Ids;
-        if (ids is null || ids.Length < 2 || string.IsNullOrWhiteSpace(ids[1])) return 0;
-        return int.TryParse(ids[1], out int bgmId) ? bgmId : 0;
+        int index = (int)source;
+        return ids is not null && index >= 0 && index < ids.Length && !string.IsNullOrWhiteSpace(ids[index])
+            ? ids[index]
+            : null;
     }
 
     /// <summary>

@@ -146,6 +146,13 @@ internal class NextMoeKungalAdapter
                 int id = ParseId(c.Id);
                 if (id != 0) result[id] = ToCharacter(c);
             }
+
+            // 服务端把「请求了但不可见」的 id 原样回在 missing[]（不存在 / 被 nsfw 闸挡住 / 已合并）。
+            // 此前完全忽略它——于是「角色本来没有」与「请求没被满足」在代码里无法区分，出问题查不出来。
+            if (list?.Missing is { Count: > 0 } missing)
+                Plugin.HostApi?.Log(Microsoft.UI.Xaml.Controls.InfoBarSeverity.Informational,
+                    $"nextmoe 角色批量: {missing.Count} 个 id 未返回（不存在/被 nsfw 挡住/已合并）: " +
+                    string.Join(",", missing.Take(10)));
         }
         return result;
     }

@@ -141,7 +141,7 @@ internal static class HostServices
         }
         catch
         {
-            // 静默
+            LogHostReflectionFailure();
         }
     }
 
@@ -180,8 +180,10 @@ internal static class HostServices
             string? token = tokenField?.GetValue(account) as string;
             return string.IsNullOrEmpty(token) ? null : token;
         }
-        catch
+        catch (Exception ex)
         {
+            // 未登录不算失败（account 为 null 时上面就直接返回了），走到这里说明是真正的反射/读取异常
+            LogHostReflectionFailure(ex);
             return null; // 未登录/反射失败 → 跳过 Bangumi 采集
         }
     }
@@ -228,6 +230,46 @@ internal static class HostServices
         }
     }
 
+    /// <summary>
+    /// 反射失败的一次性告警（同一处只报一次，避免批量搜刮时刷屏）。
+    /// 动机：这些反射点此前是静默 <c>catch { }</c>——宿主内部接口一旦改名/改签名，插件功能会悄悄失效
+    /// （评分拉不到、列表不自动刷新、日志入口打不开、Bangumi tag 采集静默跳过）且日志里毫无痕迹。
+    /// **只加日志，不改变任何行为**：调用方照旧返回默认值或继续走兜底路径。
+    /// </summary>
+    private static void LogHostReflectionFailure(Exception? ex = null)
+    {
+        string site = "unknown";
+        try
+        {
+            // frame 0 = 本方法；frame 1 = 实际失败的那个宿主反射方法（用于区分坏的是哪一处）
+            site = new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name ?? site;
+        }
+        catch
+        {
+            // 取不到方法名不影响日志本身
+        }
+
+        lock (LoggedReflectionFailures)
+        {
+            if (!LoggedReflectionFailures.Add(site)) return;
+        }
+
+        try
+        {
+            Plugin.HostApi?.Log(InfoBarSeverity.Warning,
+                $"宿主接口反射失败: {site}()" +
+                (ex is null ? "" : $"，{ex.GetType().Name}: {ex.Message}") +
+                " —— 该功能会静默降级（通常是宿主内部接口改名/改签名，插件需要跟进）");
+        }
+        catch
+        {
+            // 日志本身失败不能影响主流程
+        }
+    }
+
+    /// <summary>已经告警过的反射点（去重用）</summary>
+    private static readonly System.Collections.Generic.HashSet<string> LoggedReflectionFailures = new();
+
     private static Type ServiceType() => Service.GetType();
 
     /// <summary>当前已订阅宿主 PhrasedEvent 的处理器（单一，页面重建会覆盖）</summary>
@@ -248,7 +290,7 @@ internal static class HostServices
         }
         catch
         {
-            // 静默
+            LogHostReflectionFailure();
         }
     }
 
@@ -264,7 +306,7 @@ internal static class HostServices
         }
         catch
         {
-            // 静默
+            LogHostReflectionFailure();
         }
     }
 
@@ -294,7 +336,7 @@ internal static class HostServices
         }
         catch
         {
-            // 静默
+            LogHostReflectionFailure();
         }
     }
 
@@ -319,6 +361,7 @@ internal static class HostServices
         catch
         {
             // 静默：新增游戏暂不被守卫观察，重启插件后恢复全覆盖
+            LogHostReflectionFailure();
         }
     }
 
@@ -334,7 +377,7 @@ internal static class HostServices
         }
         catch
         {
-            // 静默
+            LogHostReflectionFailure();
         }
     }
 
@@ -356,6 +399,7 @@ internal static class HostServices
         }
         catch
         {
+            LogHostReflectionFailure();
             return null;
         }
     }
@@ -384,6 +428,7 @@ internal static class HostServices
         }
         catch
         {
+            LogHostReflectionFailure();
             return null; // 反射失败 → 调用方给提示
         }
     }

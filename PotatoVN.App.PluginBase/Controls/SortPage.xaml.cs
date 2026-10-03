@@ -287,6 +287,9 @@ public sealed partial class SortPage : Page
     /// <summary>内容分类筛选键：All=全部</summary>
     private const string CategoryKeyAll = "All";
 
+    /// <summary>形态轴「全部」。历史遗留：这里原先借用 <see cref="CategoryKeyAll"/>，两者恰好都是 "All" 才没暴露问题。</summary>
+    private const string FormKeyAll = "All";
+
     /// <summary>「筛选」弹出层打开时，同步预设单选与状态勾选态（仅在自定义模式下显示勾选）</summary>
     private void FilterMenu_Opening(object sender, object e)
     {
@@ -587,7 +590,7 @@ public sealed partial class SortPage : Page
     private bool MatchesForm(Galgame game)
     {
         string key = Plugin.Data.FormKey;
-        if (key == CategoryKeyAll) return true;
+        if (key == FormKeyAll) return true;
         return GalgameClassifier.ClassifyForm(game).ToString() == key;
     }
 
@@ -624,7 +627,7 @@ public sealed partial class SortPage : Page
     {
         string key = Plugin.Data.FormKey;
         if (key is not ("All" or "TraditionalAdv" or "NonTraditionalAdv")) key = "All";
-        FormAll.IsChecked = key == CategoryKeyAll;
+        FormAll.IsChecked = key == FormKeyAll;
         FormTraditional.IsChecked = key == "TraditionalAdv";
         FormNonTraditional.IsChecked = key == "NonTraditionalAdv";
     }
@@ -749,7 +752,7 @@ public sealed partial class SortPage : Page
         // 与待玩总时长/时长未知（走过滤后视图）口径一致
         bool isGlobal = Plugin.Data.RangeKey == RangeKeyAll &&
                         Plugin.Data.CategoryKey == CategoryKeyAll &&
-                        Plugin.Data.FormKey == CategoryKeyAll;
+                        Plugin.Data.FormKey == FormKeyAll;
         IEnumerable<Galgame> progressSet = _source.Source.OfType<Galgame>().Where(VirtualGameVisible);
         if (!isGlobal)
             progressSet = progressSet.Where(g => MatchesRange(g) && MatchesCategory(g) && MatchesForm(g));
@@ -1117,7 +1120,54 @@ public sealed partial class SortPage : Page
         RestoreSearchState();
         RefreshFilter();
 
-        Plugin.HostApi.Info(InfoBarSeverity.Informational, title: "导入完成", msg: "插件数据已替换并持久化");
+        Plugin.HostApi.Info(InfoBarSeverity.Informational, title: "导入完成",
+            msg: $"插件数据已替换并持久化：{PluginDataIoHelper.Describe(data)}");
+    }
+
+    #endregion
+
+    #region 评分缓存维护
+
+    /// <summary>
+    /// 清空加权评分缓存（「更多」菜单）。
+    /// 动机：评分缓存此前没有时效也没有清理入口，某款游戏当时拉不到分就会一直显示「暂无评分数据」；
+    /// 现在缓存本身带了有效期（见 <see cref="RatingCachePolicy"/>），这里再给一个用户可主动触发的出口。
+    /// 不可撤销，但代价只是下次重新拉取，故只做一次确认。
+    /// </summary>
+    private async void ClearRatingCache_Click(object sender, RoutedEventArgs e)
+    {
+        int count = Plugin.Data.RatingCache.Count;
+        if (count == 0)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "评分缓存本来就是空的");
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
+            Title = "清理评分缓存",
+            Content = new TextBlock
+            {
+                Text = $"将清空 {count} 条评分缓存（bangumi / vndb 分值与票数）。\n\n" +
+                       "· 「按加权评分」排序会暂时变成未知，重新计算后恢复\n" +
+                       "· 详情页评分卡片会在下次进入时重新拉取\n" +
+                       "· 不影响搜刮缓存、手动分类覆盖与其它设置\n\n" +
+                       "适合某款游戏评分长期显示「暂无」、或想强制刷新上游评分时使用。",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "清理",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        int cleared = RatingCachePolicy.Clear();
+        ApplySort(); // 排序键为「按加权评分」时立即反映（未知排最后）
+        RefreshFilter();
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            title: "评分缓存已清理", msg: $"已清空 {cleared} 条；下次进入详情页或批量计算时会重新拉取");
+        Plugin.HostApi.Log(InfoBarSeverity.Informational, $"评分缓存已清理: {cleared} 条");
     }
 
     #endregion
@@ -1430,7 +1480,7 @@ public sealed partial class SortPage : Page
     /// <summary>
     /// 批量计算评分：对当前筛选/勾选的游戏批量拉取 bangumi + vndb 官方评分（复用详情页同款逻辑），
     /// 写入 RatingCache 供「按加权评分」排序与详情页卡片使用。
-    /// 确认框可勾选/取消「跳过已有缓存」：默认增量（跳过已缓存的）；取消勾选则全部重算
+    /// 确认框可勾选/取消「跳过仍新鲜的缓存」：默认增量（只跳过未过期的）；取消勾选则全部重算
     /// （如补了 bangumi/vndb id 后需要重新拉取）。
     /// </summary>
     private async void BatchRating_Click(object sender, RoutedEventArgs e)
@@ -1445,10 +1495,10 @@ public sealed partial class SortPage : Page
             return;
         }
 
-        // 默认增量：跳过已有缓存的游戏（含「无评分」标记——避免反复拉取无 id 的游戏）；
+        // 默认增量：只跳过**仍然新鲜**的缓存（过期缓存——包括「当时没评分」的负缓存——会重新拉取）；
         // 用户可取消勾选强制全量重算（如补了 bangumi/vndb id 后需要重新拉取）
         bool skipCached = true;
-        int cachedCount = games.Count(g => Plugin.Data.RatingCache.ContainsKey(g.Uuid.ToString()));
+        int cachedCount = games.Count(g => RatingCachePolicy.HasFresh(g));
         var dialog = new ContentDialog
         {
             XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
@@ -1467,7 +1517,8 @@ public sealed partial class SortPage : Page
                     },
                     new CheckBox
                     {
-                        Content = $"跳过已有评分缓存的游戏（本次将跳过 {cachedCount} 款；取消勾选则全部重新计算）",
+                        Content = $"跳过仍新鲜的评分缓存（本次将跳过 {cachedCount} 款；过期的会自动重算，" +
+                                  "取消勾选则全部重新计算）",
                         IsChecked = true, // 代码设置选中态
                     },
                 },
@@ -1480,16 +1531,16 @@ public sealed partial class SortPage : Page
         skipCached = (dialog.Content as StackPanel)?.Children
             .OfType<CheckBox>().FirstOrDefault()?.IsChecked == true;
 
-        // 目标集：勾选跳过 → 仅无缓存的；取消勾选 → 全部重算
+        // 目标集：勾选跳过 → 仅「无缓存或已过期」的；取消勾选 → 全部重算
         List<Galgame> pending = skipCached
-            ? games.Where(g => !Plugin.Data.RatingCache.ContainsKey(g.Uuid.ToString())).ToList()
+            ? games.Where(g => !RatingCachePolicy.HasFresh(g)).ToList()
             : games;
         int skip = games.Count - pending.Count;
         if (pending.Count == 0)
         {
             Plugin.HostApi.Info(InfoBarSeverity.Informational,
                 title: "计算评分",
-                msg: $"当前 {games.Count} 款游戏均已计算过评分" + (skip > 0 ? $"（本次跳过 {skip} 款）" : ""));
+                msg: $"当前 {games.Count} 款游戏的评分缓存都还新鲜" + (skip > 0 ? $"（本次跳过 {skip} 款）" : ""));
             return;
         }
 
@@ -1514,7 +1565,9 @@ public sealed partial class SortPage : Page
                 catch { /* 页面已销毁，忽略 */ }
                 try
                 {
-                    RatingData? rating = await Plugin.FetchRatingAsync(game, force: !skipCached);
+                    // force: true —— pending 里的条目按定义就是「无缓存 / 已过期 / 用户要求全量」，
+                    // 必须绕过 FetchRatingAsync 的「见缓存即返回」短路，否则过期条目会被原样返回、白算一次
+                    RatingData? rating = await Plugin.FetchRatingAsync(game, force: true);
                     if (rating is not null && (rating.BgmScore > 0 || rating.VndbScore > 0))
                         ok++;
                     else

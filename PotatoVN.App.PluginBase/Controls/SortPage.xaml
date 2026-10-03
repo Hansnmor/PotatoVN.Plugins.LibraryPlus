@@ -253,6 +253,8 @@
                                         ToolTipService.ToolTip="把本插件的设置、手动分类覆盖、搜刮与评分缓存导出为 JSON 备份（防误删）" />
                         <MenuFlyoutItem Text="导入插件数据…" Click="ImportData_Click"
                                         ToolTipService.ToolTip="从导出的 JSON 备份整体恢复插件数据（覆盖当前，需确认）" />
+                        <MenuFlyoutItem Text="清理评分缓存…" Click="ClearRatingCache_Click"
+                                        ToolTipService.ToolTip="清空加权评分缓存：清掉后「按加权评分」排序与详情页评分卡片会在下次进入/计算时重新拉取。适合某款游戏评分长期显示「暂无」、或想强制刷新上游评分时使用" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="打开当天日志" Click="OpenTodayLog_Click"
                                         ToolTipService.ToolTip="用默认文本编辑器打开宿主 PotatoVN 今天的日志（含插件搜刮/角色中文名解析的诊断信息）" />
