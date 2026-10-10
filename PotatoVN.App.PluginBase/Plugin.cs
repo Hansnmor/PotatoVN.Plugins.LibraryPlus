@@ -89,12 +89,15 @@ namespace PotatoVN.App.PluginBase
 
             // 启动守卫：监听全库游戏的 LastPlayTime 跳变，试玩（未达阈值）后还原，
             // 防止原生主页「最后游玩」排序被纯测试打开污染。新增入库的游戏经事件补挂监听。
+            // 订阅走 HostServices 的跨代接口：新宿主 GalgameMutated 的 Added 位，
+            // 旧宿主回退 GalgameAddedEvent（v1.10.2.0 起旧事件已删除，按旧名订阅会静默失效）。
             Helper.LaunchGuardHelper.Initialize();
-            HostServices.SubscribeGalgameAdded(game =>
-            {
-                Helper.LaunchGuardHelper.WatchNewGame(game);
-                Helper.VolumeNormalizer.WatchNewGame(game);
-            });
+            HostServices.SubscribeGalgameAddedCrossGen(OnGalgameAdded);
+
+            // 新游戏评分自动采集：宿主 AddGameAsync 是「解析（写好外部 id）→ 落盘 → 发 Added 事件」，
+            // 所以事件到达时 Bangumi/VNDB id 已可用，此刻即可拉评分——
+            // 修掉「添加游戏后不打开详情页就永远没有评分」的缺口。
+            Helper.RatingAutoFetcher.Initialize();
 
             // NextMoe 搜刮凭据：用户访问令牌（OAuth 授权码+PKCE），按用户计配额。
             // 未登录时 GetAccessTokenAsync 返回 null → 请求带不上 Authorization → 401，
@@ -115,10 +118,25 @@ namespace PotatoVN.App.PluginBase
             Helper.VolumeNormalizer.Initialize();
         }
 
+        /// <summary>新游戏入库：给守卫与音量规范化补挂观察（跨代订阅回调，见 HostServices）。</summary>
+        private static void OnGalgameAdded(GalgameManager.Models.Galgame game)
+        {
+            try
+            {
+                Helper.LaunchGuardHelper.WatchNewGame(game);
+                Helper.VolumeNormalizer.WatchNewGame(game);
+            }
+            catch
+            {
+                // 补挂失败不影响宿主与其它订阅者
+            }
+        }
+
         public Task OnUninstallAsync(bool deleteData, Action<TimeSpan> extendWaitHandler, CancellationToken cts)
         {
             if (cts.IsCancellationRequested) return Task.FromCanceled(cts);
-            HostServices.UnsubscribeGalgameAdded();
+            HostServices.UnsubscribeGalgameAddedCrossGen();
+            Helper.RatingAutoFetcher.Uninitialize();
             Helper.LaunchGuardHelper.Uninitialize();
             Helper.VolumeNormalizer.Uninitialize();
             KungalOpenHelper.Uninitialize();

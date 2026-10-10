@@ -964,6 +964,30 @@ public sealed partial class SortPage : Page
             msg: $"已清空《{game.Name.Value}》的音量规范化记录：下次启动时会重新把应用音量压到 {Plugin.Data.VolumeNormalizeLevel * 100:0}%");
     }
 
+    /// <summary>
+    /// 删除单款游戏的评分缓存（右键菜单，2026-10-10 新增）。
+    /// 动机：此前只有「更多 → 清理评分缓存…」能整体清空，想只刷新一款游戏做不到（只能等 30 天过期）。
+    /// 删掉后该游戏在「按加权评分」排序里暂时变未知，下次打开详情页（或批量计算）会重新拉取。
+    /// 不做确认框：代价只是重新请求一次，且随时可再拉。
+    /// </summary>
+    private void RemoveRatingCache_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentGame is not { } game) return;
+        bool removed = RatingCachePolicy.Remove(game);
+        if (!removed)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational,
+                msg: $"《{game.Name.Value}》本来就没有评分缓存");
+            return;
+        }
+        // 排序键为「按加权评分」时立即反映（该游戏变未知、排到最后）
+        try { ApplySort(); } catch { /* 页面可能已销毁 */ }
+        try { RefreshFilter(); } catch { /* 同上 */ }
+        Plugin.HostApi.Info(InfoBarSeverity.Informational,
+            msg: $"已删除《{game.Name.Value}》的评分缓存：下次打开它的详情页会重新拉取");
+        Plugin.HostApi.Log(InfoBarSeverity.Informational, $"已删除单款评分缓存: {game.Name.Value}");
+    }
+
     /// <summary>把 RadioMenuFlyoutItem.Tag（float 字符串）解析成浮点；解析失败返回 null</summary>
     private static float? TryParseFloatTag(FrameworkElement? item)
     {
@@ -1129,32 +1153,61 @@ public sealed partial class SortPage : Page
     #region 评分缓存维护
 
     /// <summary>
-    /// 清空加权评分缓存（「更多」菜单）。
+    /// 清理加权评分缓存（「更多」菜单）。
     /// 动机：评分缓存此前没有时效也没有清理入口，某款游戏当时拉不到分就会一直显示「暂无评分数据」；
     /// 现在缓存本身带了有效期（见 <see cref="RatingCachePolicy"/>），这里再给一个用户可主动触发的出口。
+    ///
+    /// 联动语义（2026-10-10 修正）：与「批量搜刮 / 计算评分 / 清除游玩记录」保持一致——
+    /// **多选模式下有勾选 → 只清理勾选的游戏**；否则清理**当前筛选**可见的游戏。
+    /// 另外提供「清理全部」选项，保留原先"整库清空"的用途。
     /// 不可撤销，但代价只是下次重新拉取，故只做一次确认。
     /// </summary>
     private async void ClearRatingCache_Click(object sender, RoutedEventArgs e)
     {
-        int count = Plugin.Data.RatingCache.Count;
-        if (count == 0)
+        List<Galgame> games = GetBatchTargets();
+        bool isSelected = games.Count > 0 &&
+                          GameGridView.SelectionMode == ListViewSelectionMode.Multiple;
+        if (!isSelected) games = _source.OfType<Galgame>().ToList(); // 非多选时 = 当前筛选集
+        if (games.Count == 0)
+        {
+            Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "当前筛选下没有游戏");
+            return;
+        }
+
+        // 目标集里实际有缓存的那些（没缓存的跳过，不占数字）
+        int cachedInScope = games.Count(g => RatingCachePolicy.HasAny(g));
+        int cachedTotal = Plugin.Data.RatingCache.Count;
+        if (cachedTotal == 0)
         {
             Plugin.HostApi.Info(InfoBarSeverity.Informational, msg: "评分缓存本来就是空的");
             return;
         }
 
+        var scopeCheck = new CheckBox
+        {
+            Content = $"同时清理范围外的其它 {Math.Max(0, cachedTotal - cachedInScope)} 条缓存（勾选 = 清空整个评分缓存）",
+            IsChecked = false, // 代码设置选中态
+        };
         var dialog = new ContentDialog
         {
             XamlRoot = Plugin.HostApi.GetMainWindow()?.Content.XamlRoot,
             Title = "清理评分缓存",
-            Content = new TextBlock
+            Content = new StackPanel
             {
-                Text = $"将清空 {count} 条评分缓存（bangumi / vndb 分值与票数）。\n\n" +
-                       "· 「按加权评分」排序会暂时变成未知，重新计算后恢复\n" +
-                       "· 详情页评分卡片会在下次进入时重新拉取\n" +
-                       "· 不影响搜刮缓存、手动分类覆盖与其它设置\n\n" +
-                       "适合某款游戏评分长期显示「暂无」、或想强制刷新上游评分时使用。",
-                TextWrapping = TextWrapping.Wrap,
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"将清理{(isSelected ? "选中的" : "当前筛选的")} {games.Count} 款游戏里" +
+                               $"有评分缓存的 {cachedInScope} 款（共 {cachedTotal} 条缓存）。\n\n" +
+                               "· 「按加权评分」排序会暂时变成未知，重新计算后恢复\n" +
+                               "· 详情页评分卡片会在下次进入时重新拉取\n" +
+                               "· 不影响搜刮缓存、手动分类覆盖与其它设置",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    scopeCheck,
+                },
             },
             PrimaryButtonText = "清理",
             CloseButtonText = "取消",
@@ -1162,12 +1215,17 @@ public sealed partial class SortPage : Page
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        int cleared = RatingCachePolicy.Clear();
+        bool clearAll = scopeCheck.IsChecked == true;
+        int cleared = clearAll ? RatingCachePolicy.Clear() : RatingCachePolicy.Remove(games);
         ApplySort(); // 排序键为「按加权评分」时立即反映（未知排最后）
         RefreshFilter();
         Plugin.HostApi.Info(InfoBarSeverity.Informational,
-            title: "评分缓存已清理", msg: $"已清空 {cleared} 条；下次进入详情页或批量计算时会重新拉取");
-        Plugin.HostApi.Log(InfoBarSeverity.Informational, $"评分缓存已清理: {cleared} 条");
+            title: "评分缓存已清理",
+            msg: clearAll
+                ? $"已清空全部 {cleared} 条；下次进入详情页或批量计算时会重新拉取"
+                : $"已清理{(isSelected ? "选中的" : "当前筛选的")} {cleared} 款游戏的评分缓存；下次进入详情页会重新拉取");
+        Plugin.HostApi.Log(InfoBarSeverity.Informational,
+            $"评分缓存已清理: {(clearAll ? "全部" : "按范围")} {cleared} 条（范围 {games.Count} 款，勾选={isSelected}）");
     }
 
     #endregion

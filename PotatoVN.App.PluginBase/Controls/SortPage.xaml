@@ -58,6 +58,8 @@
             <MenuFlyoutItem Icon="Download" Text="下载游戏信息" Click="FetchInfo_Click" />
             <MenuFlyoutItem Icon="Refresh" Text="清空音量规范化记录" Click="ResetVolumeRecord_Click"
                             ToolTipService.ToolTip="清空该游戏的「已压过」标记：下次启动时重新把应用音量压到设定档位（适合改了音量档位后想重新压制）" />
+            <MenuFlyoutItem Icon="Refresh" Text="删除该游戏的评分缓存" Click="RemoveRatingCache_Click"
+                            ToolTipService.ToolTip="只清掉这一款游戏的加权评分缓存：下次打开它的详情页会重新向 bangumi/vndb 拉取（适合某款游戏评分长期显示「暂无」或想强制刷新）" />
             <MenuFlyoutItem Icon="OpenLocal" Text="在文件管理器中打开" x:Name="OpenInExplorerItem" Click="OpenInExplorer_Click" />
             <MenuFlyoutItem Icon="Delete" Text="从游戏库删除" Click="RemoveGame_Click" />
         </MenuFlyout>

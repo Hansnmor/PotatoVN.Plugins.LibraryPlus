@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using GalgameManager.Models;
 using PotatoVN.App.PluginBase.Models;
 
@@ -45,4 +46,43 @@ internal static class RatingCachePolicy
         Plugin.Data.RatingCache = new Dictionary<string, RatingData>(); // 整体替换赋值才会触发持久化
         return count;
     }
+
+    /// <summary>
+    /// 删除单款游戏的评分缓存（右键菜单用）；返回是否真的删掉了。
+    /// 与 <see cref="Clear"/> 同为整体替换赋值（集合内修改不触发持久化）。
+    /// 删掉后：详情页卡片会在下次进入时重新拉取，「按加权评分」排序里该游戏暂时变未知。
+    /// </summary>
+    public static bool Remove(Galgame game)
+    {
+        string key = game.Uuid.ToString();
+        if (!Plugin.Data.RatingCache.ContainsKey(key)) return false;
+        var cache = new Dictionary<string, RatingData>(Plugin.Data.RatingCache);
+        cache.Remove(key);
+        Plugin.Data.RatingCache = cache;
+        return true;
+    }
+
+    /// <summary>
+    /// 批量删除指定游戏的评分缓存（「更多 → 清理评分缓存…」按多选/筛选范围清理用）；
+    /// 返回实际删掉的**游戏数**（没缓存的跳过，不计入）。
+    /// </summary>
+    public static int Remove(IEnumerable<Galgame> games)
+    {
+        var keys = new List<string>();
+        foreach (Galgame g in games)
+        {
+            string key = g.Uuid.ToString();
+            if (Plugin.Data.RatingCache.ContainsKey(key)) keys.Add(key);
+        }
+        if (keys.Count == 0) return 0;
+
+        var cache = new Dictionary<string, RatingData>(Plugin.Data.RatingCache);
+        foreach (string key in keys) cache.Remove(key);
+        Plugin.Data.RatingCache = cache; // 整体替换赋值才会触发持久化
+        return keys.Count;
+    }
+
+    /// <summary>该游戏是否已有评分缓存（不论是否过期）；用于右键菜单的可用性与提示文案。</summary>
+    public static bool HasAny(Galgame game) =>
+        Plugin.Data.RatingCache.ContainsKey(game.Uuid.ToString());
 }

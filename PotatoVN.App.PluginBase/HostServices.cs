@@ -188,6 +188,101 @@ internal static class HostServices
         }
     }
 
+    // ==================== 宿主后台任务（问宿主「游戏是否真的在跑」）====================
+    //
+    // 背景（2026-10-10 实测）：启动守卫原先靠「TotalPlayTime 滴答 + ProcessName 进程探测」判断
+    // 游戏是否还在运行，但两者在本机都不可靠——ProcessName 默认是 null（该字段是用户手动指定的），
+    // 于是进程探测恒为 false；而滴答是每分钟一次，宽限期只有 2 分钟，丢一次就误判「试玩结束」，
+    // 导致用户明明玩了几十分钟却被还原 LastPlayTime（实测日志：观察后 2 分钟即还原，而游戏跑了 44 分钟）。
+    //
+    // 正确做法是**问宿主**：宿主为每次游玩创建一个 RecordPlayTimeTask 后台任务，
+    // 它存在于 BgTaskService.GetBgTasks() 期间 = 宿主认定游戏正在运行；
+    // 它被移除（并广播 BgTaskRemoved）= 宿主认定游戏已退出，此时才该结算。
+    // 这比插件自己猜可靠得多，且 RecordPlayTimeTask 还公开了 CurrentPlayTime / StartTime 供直接取用。
+
+    /// <summary>宿主 IBgTaskService 实例（反射 App.GetService 解析，失败返回 null）</summary>
+    private static object? GetBgTaskService()
+    {
+        try
+        {
+            Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+            Type? appType = host?.GetType("GalgameManager.App");
+            Type? svcInterface = host?.GetType("GalgameManager.Contracts.Services.IBgTaskService");
+            if (appType is null || svcInterface is null) return null;
+            MethodInfo? getService = appType.GetMethod("GetService", BindingFlags.Public | BindingFlags.Static);
+            return getService?.MakeGenericMethod(svcInterface).Invoke(null, null);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 宿主当前是否正在为该游戏记录游玩时长（= 游戏真的在运行）。
+    /// 判据：BgTaskService.GetBgTasks() 里存在 Galgame 字段等于该游戏的 RecordPlayTimeTask。
+    /// 拿不到宿主服务时返回 null（**未知**，调用方不得据此判定会话结束）。
+    /// </summary>
+    public static bool? IsHostRecordingPlayTime(Galgame game)
+    {
+        try
+        {
+            object? service = GetBgTaskService();
+            if (service is null) return null;
+            MethodInfo? getTasks = service.GetType().GetMethod("GetBgTasks");
+            if (getTasks?.Invoke(service, null) is not System.Collections.IEnumerable tasks) return null;
+
+            foreach (object? task in tasks)
+            {
+                if (task is null) continue;
+                Type t = task.GetType();
+                if (t.Name != "RecordPlayTimeTask") continue;
+                // Galgame 是公开字段（宿主 RecordPlayTimeTask.Galgame）
+                if (t.GetField("Galgame")?.GetValue(task) is Galgame g && g.Uuid == game.Uuid)
+                    return true;
+            }
+            return false; // 服务可用、但没有该游戏的任务 → 宿主认为它没在跑
+        }
+        catch
+        {
+            LogHostReflectionFailure();
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 取宿主为该游戏记录的**本次游玩分钟数**（RecordPlayTimeTask.CurrentPlayTime）。
+    /// 拿不到返回 null。这是宿主自己的计数，比插件用 TotalPlayTime 增量推算更准。
+    /// </summary>
+    public static int? GetHostCurrentPlayMinutes(Galgame game)
+    {
+        try
+        {
+            object? service = GetBgTaskService();
+            if (service is null) return null;
+            MethodInfo? getTasks = service.GetType().GetMethod("GetBgTasks");
+            if (getTasks?.Invoke(service, null) is not System.Collections.IEnumerable tasks) return null;
+
+            foreach (object? task in tasks)
+            {
+                if (task is null) continue;
+                Type t = task.GetType();
+                if (t.Name != "RecordPlayTimeTask") continue;
+                if (t.GetField("Galgame")?.GetValue(task) is Galgame g && g.Uuid == game.Uuid)
+                {
+                    object? v = t.GetProperty("CurrentPlayTime")?.GetValue(task);
+                    return v is null ? null : Convert.ToInt32(v);
+                }
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// 下载角色图片（反射宿主 GalgameManager.Helpers.DownloadHelper.DownloadAndSaveImageWithDiffThread，
     /// 保存到宿主数据目录 images 文件夹）。补齐角色的 PreviewImageUrl/ImageUrl 是内存字段
@@ -274,6 +369,131 @@ internal static class HostServices
 
     /// <summary>当前已订阅宿主 PhrasedEvent 的处理器（单一，页面重建会覆盖）</summary>
     private static Action? _phrasedSubscriber;
+
+    // ==================== 「游戏被添加」事件的跨代订阅 ====================
+    //
+    // 宿主 v1.10.2.0 起事件模型换代（实测）：
+    //   旧代（≤ v1.10.1.0）：GalgameAddedEvent(Action<Galgame>) 等四个独立事件
+    //   新代（≥ v1.10.2.0）：合并为 GalgameMutated(EventHandler<GalgameMutationEventArgs>)，
+    //                        旧事件名全部删除；按 Changes 位标志（Added/Metadata/...）区分变更类型
+    // 按旧名订阅在新宿主上 GetEvent 返回 null → 静默失效（不抛异常、无日志），
+    // 这正是「添加游戏后不自动采集评分」的根因。此处按代际二选一订阅。
+
+    /// <summary>已注册的「游戏被添加」订阅（新代存委托用于退订，旧代存回调）</summary>
+    private static Delegate? _addedSubscriberNewGen;
+    private static Action<Galgame>? _addedSubscriberOldGen;
+
+    /// <summary>
+    /// 订阅「游戏被添加到库」事件（跨宿主代际）。
+    /// 新宿主订阅 <c>GalgameMutated</c> 的 <c>Added</c> 位；新事件不存在时回退 <c>GalgameAddedEvent</c>。
+    /// 宿主 <c>AddGameAsync</c> 的顺序是「解析（写好外部 id）→ 落盘 → 发事件」，
+    /// 所以回调触发时 Bangumi/VNDB id 已经可用，适合立刻采集评分。
+    /// </summary>
+    public static void SubscribeGalgameAddedCrossGen(Action<Galgame> handler)
+    {
+        try
+        {
+            EventInfo? mutated = ServiceType().GetEvent("GalgameMutated");
+            if (mutated is not null)
+            {
+                int addedFlag = ChangeKindFlag("Added");
+                Type argsType = mutated.EventHandlerType!.GetGenericArguments()[0];
+
+                // 泛型委托不支持协变，EventHandler<EventArgs> 传不进去——
+                // 必须用 Delegate.CreateDelegate 按事件的精确签名构造
+                var proxy = new MutationProxy(handler, addedFlag, argsType);
+                Delegate del = Delegate.CreateDelegate(mutated.EventHandlerType, proxy,
+                    typeof(MutationProxy).GetMethod(nameof(MutationProxy.Invoke))!);
+                mutated.AddEventHandler(Service, del);
+                _addedSubscriberNewGen = del;
+                return;
+            }
+
+            EventInfo? legacy = ServiceType().GetEvent("GalgameAddedEvent");
+            if (legacy is null)
+            {
+                LogHostReflectionFailure();
+                return;
+            }
+            legacy.AddEventHandler(Service, handler);
+            _addedSubscriberOldGen = handler;
+        }
+        catch
+        {
+            LogHostReflectionFailure();
+        }
+    }
+
+    /// <summary>退订「游戏被添加」事件（按订阅时实际用的那一代退订）</summary>
+    public static void UnsubscribeGalgameAddedCrossGen()
+    {
+        try
+        {
+            if (_addedSubscriberNewGen is not null)
+            {
+                ServiceType().GetEvent("GalgameMutated")?.RemoveEventHandler(Service, _addedSubscriberNewGen);
+                _addedSubscriberNewGen = null;
+            }
+            if (_addedSubscriberOldGen is not null)
+            {
+                ServiceType().GetEvent("GalgameAddedEvent")?.RemoveEventHandler(Service, _addedSubscriberOldGen);
+                _addedSubscriberOldGen = null;
+            }
+        }
+        catch
+        {
+            LogHostReflectionFailure();
+        }
+    }
+
+    /// <summary>新代事件的调用代理：反射解包 Game/Changes，命中指定位标志才回调</summary>
+    private sealed class MutationProxy
+    {
+        private readonly Action<Galgame> _handler;
+        private readonly int _wanted;
+        private readonly PropertyInfo? _gameProp;
+        private readonly PropertyInfo? _changesProp;
+
+        public MutationProxy(Action<Galgame> handler, int wanted, Type argsType)
+        {
+            _handler = handler;
+            _wanted = wanted;
+            _gameProp = argsType.GetProperty("Game");
+            _changesProp = argsType.GetProperty("Changes");
+        }
+
+        public void Invoke(object? sender, object args)
+        {
+            try
+            {
+                if (_gameProp?.GetValue(args) is not Galgame game) return;
+                int changes = _changesProp?.GetValue(args) is { } c ? Convert.ToInt32(c) : 0;
+                // 位标志过滤；取不到标志值（宿主改枚举名）时不过滤——宁可多回调，不能漏
+                if (_wanted != 0 && (changes & _wanted) == 0) return;
+                _handler(game);
+            }
+            catch
+            {
+                // 单个订阅者异常不能影响宿主的事件分发
+            }
+        }
+    }
+
+    /// <summary>宿主 GalgameChangeKind 的位标志值（取不到返回 0 = 不过滤）</summary>
+    private static int ChangeKindFlag(string name)
+    {
+        try
+        {
+            Assembly? host = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == HostAssemblyName);
+            Type? kind = host?.GetType("GalgameManager.Enums.GalgameChangeKind");
+            return kind is null ? 0 : Convert.ToInt32(Enum.Parse(kind, name));
+        }
+        catch
+        {
+            return 0;
+        }
+    }
 
     /// <summary>
     /// 订阅宿主 GalgameCollectionService.PhrasedEvent（搜刮信息完成时触发）。

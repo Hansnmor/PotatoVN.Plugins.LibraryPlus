@@ -137,7 +137,11 @@ internal static class LaunchGuardHelper
         catch { /* 不外抛到 Messenger 派发链 */ }
     }
 
-    /// <summary>停止游玩：宿主在统计完本次时长并保存后才广播——立即出结论，正常路径零等待</summary>
+    /// <summary>
+    /// 停止游玩：宿主在统计完本次时长并保存后才广播——立即出结论，正常路径零等待。
+    /// 时长优先取宿主 <c>RecordPlayTimeTask.CurrentPlayTime</c>（它自己的计数），
+    /// 拿不到才退回 TotalPlayTime 增量（后者是整分钟滴答累加，会因 Sleep 漂移少算）。
+    /// </summary>
     private static void OnGameStopped(Galgame? game)
     {
         if (game is null) return;
@@ -156,10 +160,16 @@ internal static class LaunchGuardHelper
                 Finish(game.Uuid, reverted: false, reason: "守卫已关闭");
                 return;
             }
-            if (gained >= thresholdMin)
-                Finish(game.Uuid, reverted: false, reason: $"真玩放行（停止消息，本轮 {gained} 分钟）");
+
+            // 宿主自己的本次时长（任务可能已被移除，取不到就用增量）
+            int finalGained = HostServices.GetHostCurrentPlayMinutes(game) ?? gained;
+            Log($"守卫: 停止「{game.Name.Value}」宿主计数={finalGained}分钟 " +
+                $"滴答增量={gained}分钟 阈值={thresholdMin}分钟");
+
+            if (finalGained >= thresholdMin)
+                Finish(game.Uuid, reverted: false, reason: $"真玩放行（停止消息，本轮 {finalGained} 分钟）");
             else
-                Finish(game.Uuid, reverted: true, reason: $"试玩还原（停止消息，本轮 {gained}/{thresholdMin} 分钟）");
+                Finish(game.Uuid, reverted: true, reason: $"试玩还原（停止消息，本轮 {finalGained}/{thresholdMin} 分钟）");
         }
         catch
         {
@@ -294,6 +304,28 @@ internal static class LaunchGuardHelper
         }
     }
 
+    /// <summary>
+    /// 会话是否**确实**已结束——判据是**宿主的后台任务**，不是插件的猜测。
+    ///
+    /// 为什么这样判（2026-10-10 实测踩坑）：宿主为每次游玩创建 RecordPlayTimeTask，
+    /// 它存在于 <c>BgTaskService.GetBgTasks()</c> 期间就代表「宿主认为游戏正在运行」，
+    /// 被移除时宿主才会广播 BgTaskRemoved。此前守卫靠「TotalPlayTime 滴答 + ProcessName 进程探测」
+    /// 推断活性，而本机 ProcessName 默认是 null（该字段是用户**手动指定**的，实测 9 款游戏全为 null），
+    /// 进程探测恒为 false；滴答又只有每分钟一次、宽限期仅 2 分钟，丢一次就误判
+    /// 「试玩结束」→ 用户玩着 44 分钟却被还原（实测日志：观察后 2 分钟即还原）。
+    ///
+    /// 返回值三态：true=宿主确认在跑；false=宿主确认已退出；null=查不到（宿主服务不可用），
+    /// **null 时调用方不得判定结束**（宁可继续观察，等停止消息或任务列表恢复）。
+    /// </summary>
+    private static bool? IsSessionConfirmedRunning(Galgame game)
+    {
+        bool? recording = HostServices.IsHostRecordingPlayTime(game);
+        if (recording is not null) return recording;
+        // 宿主服务不可用 → 退回进程探测（只在配置了 ProcessName 时才算数，否则视为未知）
+        if (string.IsNullOrWhiteSpace(game.ProcessName)) return null;
+        return IsProcessAlive(game);
+    }
+
     private static void HandleLastPlayTimeChange(Galgame game)
     {
         DateTime now = game.LastPlayTime;
@@ -391,24 +423,32 @@ internal static class LaunchGuardHelper
                 return;
             }
 
-            // 活性双通道：进程可见 / 时长滴答（OnInpcPropertyChanged 已在滴答时刷新 LastActivitySeen）。
-            // 进程探测到也刷新活性——它不是必要条件，只是证据之一。
-            if (IsProcessAlive(game))
+            // ===== 会话是否结束：问宿主，不猜 =====
+            // 判据 = 宿主的 RecordPlayTimeTask 是否还在（见 IsSessionConfirmedRunning 的说明）。
+            // true  → 宿主确认游戏在跑，继续观察（刷新活性，供日志与诊断用）
+            // null  → 查不到宿主服务（且无 ProcessName 可探测）→ 证据不足，继续观察，绝不结算
+            // false → 宿主确认游戏已退出 → 才按时长判定
+            bool? running = IsSessionConfirmedRunning(game);
+            if (running is true)
             {
                 lock (Lock) state.LastActivitySeen = DateTime.Now;
-                return; // 进程还跑着，继续观察
+                return;
+            }
+            if (running is null)
+            {
+                // 证据不足不结算：等宿主停止消息或下次 Tick 再问。
+                // 这条分支专治旧实现的误判——旧代码此时会用「安静 2 分钟」判结束并还原。
+                return;
             }
 
-            // 安静未超宽限期：给慢启动的游戏和偶尔探测不到的进程留余地，继续观察
-            TimeSpan quietFor = DateTime.Now - state.LastActivitySeen;
-            if (quietFor < QuietGrace) return;
-
-            // 连续安静超过宽限期且进程不在 → 会话已结束，按时长判定
-            if (gained >= thresholdMin)
-                Finish(game.Uuid, reverted: false, reason: $"真玩（{gained} 分钟 ≥ 阈值 {thresholdMin}）");
+            // 宿主确认已退出：用宿主自己的计数优先，拿不到再退回 TotalPlayTime 增量
+            int finalGained = HostServices.GetHostCurrentPlayMinutes(game) ?? gained;
+            if (finalGained >= thresholdMin)
+                Finish(game.Uuid, reverted: false,
+                    reason: $"真玩（宿主确认已退出，本轮 {finalGained} 分钟 ≥ 阈值 {thresholdMin}）");
             else
                 Finish(game.Uuid, reverted: true,
-                    reason: $"仅试玩 {gained}/{thresholdMin} 分钟，安静 {quietFor.Minutes} 分钟无活性");
+                    reason: $"仅试玩 {finalGained}/{thresholdMin} 分钟（宿主已确认退出）");
         }
         catch
         {

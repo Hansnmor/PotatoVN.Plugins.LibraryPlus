@@ -61,6 +61,8 @@
 │   │   ├── Vndb/VndbClient.cs     # VNDB 官方 API（kana/vn，匿名 POST，rating 0-100 → ÷10）
 │   │   ├── Bangumi/BgmClient.cs   # Bangumi v0/v1 API（v1 search 可匿名拿 R18，v0 byId 匿名 404）
 │   │   ├── WeightedScoreHelper.cs # 加权评分计算（√n 权重）
+│   │   ├── RatingCachePolicy.cs   # 评分缓存时效（有分 30 天 / 无分 7 天）+ 单款/批量删除
+│   │   ├── RatingAutoFetcher.cs   # 新游戏入库自动采集评分（挂宿主 Added 事件，见 §3.11）
 │   │   ├── SearchHelper.cs        # 搜索谓词（反射宿主 ApplySearchKey + 本地降级）
 │   │   ├── GalgameClassifier.cs   # 内容分类（萌作/剧情作/拔作/其他）与形态分类
 │   │   └── ExpectedPlayTimeHelper.cs # 预计时长估算
@@ -164,6 +166,40 @@
   **不改变任何行为**）——宿主改内部接口时不再出现「功能悄悄消失、日志无痕迹」。
 - 其它小修：形态轴改用独立 `FormKeyAll` 常量（原先借用内容轴常量，只是恰好都是 "All"）；
   宿主外部 id 改用 `Ids[(int)RssType.Vndb/Bangumi]` 并加越界检查；NextMoe 角色批量记录 `missing[]`。
+
+### 3.11 新游戏评分自动采集 + 守卫会话判定重写 + 评分缓存清理联动（2026-10-10）
+
+- **新游戏评分自动采集**（`Helper/RatingAutoFetcher.cs` 新增，修「添加游戏后不自动获取评分」）：
+  评分此前只有「打开详情页」「手动批量计算」两个触发点，添加一款新游戏若不打开详情页就永远不会拉评分。
+  修法挂在**宿主「游戏入库」事件**上：宿主 `AddGameAsync` 的顺序是「解析（写好 Bangumi/VNDB 外部 id）→
+  落盘 → 发事件」，所以事件到达时外部 id 已可用，此刻即可拉分（无需等某次搜刮）。
+  首版曾挂在「搜刮完成」事件上——时机不对且多绕一圈（实测：新游戏评分是在后来的批量搜刮时才写进缓存，
+  而用户期望添加完就有）。触发后无新鲜缓存才后台拉（整体闸门防批量添加并发、失败静默），
+  成功打日志 `新游戏评分采集: XXX bgm=… vndb=…`。
+- **宿主事件跨代订阅**（`HostServices.SubscribeGalgameAddedCrossGen`，同日实测的硬事实）：
+  宿主 **v1.10.2.0 把 `GalgameAddedEvent` 删除**，合并为 `GalgameMutated`（`Changes` 位标志）。
+  按旧名 `GetEvent` 返回 null 且**不抛异常** → 静默失效（「新游戏纳入监听」从此消失）。
+  新代码订阅新代 `GalgameMutated` 的 `Added` 位（反射构造精确委托，泛型委托**不支持协变**，
+  必须 `Delegate.CreateDelegate`），旧宿主回退 `GalgameAddedEvent`。
+  ⚠️ **影响评估要克制**：这条失效只影响「插件运行期间新入库游戏」的补挂（守卫/音量的**主触发路径是
+  `GalgamePlayedMessage` 的 Messenger 通道，与该事件无关**，见 §3.8/§3.5），用户几乎无感——
+  它是「技术债」而非「功能坏了」，别再夸大。
+- **启动守卫会话判定重写**（修「玩着却被判试玩还原」，实测日志：观察后 2 分钟即还原，而游戏跑了 44 分钟）：
+  - **旧判定的根因**：靠「TotalPlayTime 滴答 + ProcessName 进程探测」推断游戏是否还在运行。
+    但 `ProcessName` 是**用户手动指定**的字段，实测 9 款游戏全为 null → 进程探测恒 false（永久失效）；
+    滴答每分钟一次、宽限期只有 2 分钟，丢一次就误判「会话结束」。
+  - **新判定：问宿主，不猜**。宿主为每次游玩创建 `RecordPlayTimeTask` 后台任务，它存在于
+    `BgTaskService.GetBgTasks()` 期间 = 宿主认定游戏在运行；被移除 = 宿主认定已退出。
+    `HostServices` 新增 `IsHostRecordingPlayTime`（三态：true/false/**null=查不到**，null 时**绝不结算**）
+    与 `GetHostCurrentPlayMinutes`（宿主自己的本次计数 `CurrentPlayTime`，比插件用 TotalPlayTime
+    增量推算更准——滴答有 `Thread.Sleep(60s)` 漂移）。结算只在「宿主确认退出」后发生；
+    时长优先用宿主计数。旧判定已整体删除（`QuietGrace` 安静宽限不再参与判定）。
+  - 验证记录：6 分钟游玩正确放行（滴答达标路径）；2 分钟游玩正确还原（新日志
+    `宿主计数=2分钟 滴答增量=2分钟` 证明宿主计数链路可用）。
+- **评分缓存清理联动多选**（「更多 → 清理评分缓存…」）：与「批量搜刮 / 计算评分 / 清除游玩记录」对齐——
+  多选有勾选 → 只清**选中**的游戏；非多选 → 清**当前筛选**可见的游戏；确认框内勾选「同时清理范围外」
+  才整库清空。`RatingCachePolicy` 新增 `Remove(game)` / `Remove(games)` / `HasAny(game)`；
+  封面右键新增「删除该游戏的评分缓存」（单款、无确认框）。
 
 ---
 
@@ -285,6 +321,26 @@ dotnet build PotatoVN.App.PluginBase/PotatoVN.App.PluginBase.csproj -c Debug
     「从某天起搜刮奇慢或全失败，但代码看起来毫无问题」——本轮单款游戏从 ~25 秒降到 ~4 秒就靠这一条。
     一律**跟随系统代理**：Clash 开着走代理、关掉（`ProxyEnable=0`）自动回直连。改完用宿主日志核对单款耗时
     （正常应在 2~5 秒；若出现「kungal 网页抓取异常 ... Timeout of 40 seconds」，就是又被写死成直连了）。
+
+14. **宿主事件/接口换代后，先评估「用户可感知影响」再动手**（2026-10-10 的教训，见 §3.11）。
+    宿主 v1.10.2.0 把 `GalgameAddedEvent` 等事件合并为 `GalgameMutated`，插件按旧名订阅 → `GetEvent`
+    返回 null 且**不抛异常** → 静默失效。但**代码层失效 ≠ 功能坏了**：
+    守卫/音量的主触发走 `GalgamePlayedMessage`（Messenger，Base 公开消息，与事件无关），用户几乎无感；
+    真正断的只是「新游戏补挂观察」这条兜底。**排查时先画清一个功能的全部触发路径**，
+    别把「有一条路断了」说成「功能坏了很久」——本轮曾因此夸大影响并误改代码。
+    订阅新代事件必须 `Delegate.CreateDelegate`（泛型委托不支持协变）；
+    退订按订阅时实际用的那一代退（`_addedSubscriberNewGen`/`_addedSubscriberOldGen` 双字段）。
+    升级宿主后先查日志「宿主接口反射失败」与「新游戏…已纳入监听」是否还在。
+
+15. **判断「游戏是否在运行」要问宿主，不要自己猜**（2026-10-10 的教训，见 §3.11）。
+    插件能拿到的间接信号都不可靠：`ProcessName` 是**用户手动指定**字段（实测 9 款游戏全为 null，
+    进程探测恒 false）；`TotalPlayTime` 滴答每分钟一次还带 `Thread.Sleep(60s)` 漂移，
+    拿它当「活性」判据、再配一个小的安静宽限期，必然误判「用户玩着却判会话结束」。
+    权威信号是宿主自己的后台任务：`BgTaskService.GetBgTasks()` 里存在该游戏的
+    `RecordPlayTimeTask` = 游戏在跑；它被移除 = 宿主确认退出（移除时广播 `BgTaskRemoved`）。
+    反射入口见 `HostServices.IsHostRecordingPlayTime` / `GetHostCurrentPlayMinutes`（本次游玩分钟数
+    直接读 `RecordPlayTimeTask.CurrentPlayTime`，比增量推算准）。**查不到宿主服务时返回 null，
+    调用方必须把 null 当「未知」而不是「已退出」**——宁可继续观察也不能凭猜测还原用户数据。
 
 ---
 
