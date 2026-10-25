@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using GalgameManager.Models;
 using GalgameManager.WinApp.Base.Contracts;
@@ -12,7 +13,7 @@ namespace PotatoVN.App.PluginBase;
 /// <summary>
 /// 反射调用宿主内部服务，补齐插件 API 未覆盖的游戏操作（保存/删除/搜刮信息）。
 /// 宿主程序集 GalgameManager 不在插件的编译期引用内，因此全部通过 AppDomain 反射调用；
-/// 目标成员均为宿主公开成员，跨小版本稳定。
+/// 宿主内部成员可能随版本变化，调用时需兼容实际签名。
 /// </summary>
 internal static class HostServices
 {
@@ -301,28 +302,37 @@ internal static class HostServices
             Type? helper = host?.GetType("GalgameManager.Helpers.DownloadHelper");
             MethodInfo? m = helper?.GetMethod("DownloadAndSaveImageWithDiffThread",
                 BindingFlags.Public | BindingFlags.Static);
-            if (m is null) return;
-            // 反射 Invoke 必须传全部参数（默认值不自动应用）：
-            // (imageUrl, retry=0, fileNameWithoutExtension, onException=null, client=null, targetFolder=null)
+            if (m is null) throw new MissingMethodException(helper?.FullName, "DownloadAndSaveImageWithDiffThread");
+            // 新宿主增加了可选 timeout；反射调用仍必须按实际签名传齐参数。
             if (!string.IsNullOrWhiteSpace(character.PreviewImageUrl))
             {
-                var previewTask = (Task<string?>)m.Invoke(null, new object?[]
-                    { character.PreviewImageUrl, 0, $"{character.Name}_Preview", null, null, null })!;
+                Task<string?> previewTask = DownloadImageAsync(m, character.PreviewImageUrl, $"{character.Name}_Preview");
                 if (await previewTask is { } preview)
                     character.PreviewImagePath = preview;
             }
             if (!string.IsNullOrWhiteSpace(character.ImageUrl))
             {
-                var imageTask = (Task<string?>)m.Invoke(null, new object?[]
-                    { character.ImageUrl, 0, $"{character.Name}_Large", null, null, null })!;
+                Task<string?> imageTask = DownloadImageAsync(m, character.ImageUrl, $"{character.Name}_Large");
                 if (await imageTask is { } image)
                     character.ImagePath = image;
             }
         }
-        catch
+        catch (Exception ex)
         {
             // 图片下载失败保持默认图，不影响批量
+            LogHostReflectionFailure(ex);
         }
+    }
+
+    private static Task<string?> DownloadImageAsync(MethodInfo method, string url, string fileName)
+    {
+        object?[] args = method.GetParameters().Length switch
+        {
+            6 => new object?[] { url, 0, fileName, null, null, null },
+            7 => new object?[] { url, 0, fileName, null, null, null, null },
+            _ => throw new TargetParameterCountException("Unsupported host image download signature")
+        };
+        return (Task<string?>)method.Invoke(null, args)!;
     }
 
     /// <summary>
@@ -331,19 +341,8 @@ internal static class HostServices
     /// （评分拉不到、列表不自动刷新、日志入口打不开、Bangumi tag 采集静默跳过）且日志里毫无痕迹。
     /// **只加日志，不改变任何行为**：调用方照旧返回默认值或继续走兜底路径。
     /// </summary>
-    private static void LogHostReflectionFailure(Exception? ex = null)
+    private static void LogHostReflectionFailure(Exception? ex = null, [CallerMemberName] string site = "unknown")
     {
-        string site = "unknown";
-        try
-        {
-            // frame 0 = 本方法；frame 1 = 实际失败的那个宿主反射方法（用于区分坏的是哪一处）
-            site = new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name ?? site;
-        }
-        catch
-        {
-            // 取不到方法名不影响日志本身
-        }
-
         lock (LoggedReflectionFailures)
         {
             if (!LoggedReflectionFailures.Add(site)) return;
@@ -367,8 +366,8 @@ internal static class HostServices
 
     private static Type ServiceType() => Service.GetType();
 
-    /// <summary>当前已订阅宿主 PhrasedEvent 的处理器（单一，页面重建会覆盖）</summary>
-    private static Action? _phrasedSubscriber;
+    /// <summary>插件批量操作自行保存，不会触发宿主 GalgameMutated；单独通知当前扩展库页。</summary>
+    private static event Action? LibraryChanged;
 
     // ==================== 「游戏被添加」事件的跨代订阅 ====================
     //
@@ -495,68 +494,69 @@ internal static class HostServices
         }
     }
 
-    /// <summary>
-    /// 订阅宿主 GalgameCollectionService.PhrasedEvent（搜刮信息完成时触发）。
-    /// 用于插件页在搜刮完成后自动刷新列表（与原生页行为对齐）。失败时静默。
-    /// </summary>
-    public static void SubscribePhrased(Action handler)
+    /// <summary>订阅宿主变更及插件批量完成通知，返回该页面专属的退订操作。</summary>
+    public static Action SubscribeLibraryChanges(Action handler)
     {
+        object? service = null;
+        EventInfo? evt = null;
+        Delegate? subscriber = null;
+        LibraryChanged += handler;
         try
         {
-            EventInfo? evt = ServiceType().GetEvent("PhrasedEvent");
-            if (evt is null) return;
-            evt.AddEventHandler(Service, handler);
-            _phrasedSubscriber = handler;
-        }
-        catch
-        {
-            LogHostReflectionFailure();
-        }
-    }
-
-    /// <summary>退订宿主 PhrasedEvent（页面销毁时调用，防事件泄漏）</summary>
-    public static void UnsubscribePhrased()
-    {
-        try
-        {
-            if (_phrasedSubscriber is null) return;
-            EventInfo? evt = ServiceType().GetEvent("PhrasedEvent");
-            evt?.RemoveEventHandler(Service, _phrasedSubscriber);
-            _phrasedSubscriber = null;
-        }
-        catch
-        {
-            LogHostReflectionFailure();
-        }
-    }
-
-    /// <summary>
-    /// 反射触发宿主 PhrasedEvent（批量搜刮完成时调用）：
-    /// 让所有订阅了该事件的页面（主页/详情页/重建后的扩展库页）统一刷新——
-    /// 解决"批量进行中切走页面，切回来看到中间状态"的问题。失败时静默。
-    /// </summary>
-    public static void TriggerPhrased()
-    {
-        try
-        {
-            FieldInfo? field = ServiceType().GetField("PhrasedEvent",
-                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            if (field?.GetValue(Service) is not Action handler) return;
-            Plugin.HostApi.InvokeOnMainThread(() =>
+            service = Service;
+            evt = service.GetType().GetEvent("GalgameMutated");
+            if (evt is not null)
             {
-                try
-                {
-                    handler();
-                }
-                catch
-                {
-                    // 静默：刷新失败不影响批量结果
-                }
-            });
+                int wanted = ChangeKindFlag("Added") | ChangeKindFlag("Metadata") |
+                             ChangeKindFlag("SourceEntries") | ChangeKindFlag("Images") |
+                             ChangeKindFlag("Characters") | ChangeKindFlag("PlayStatus");
+                Type argsType = evt.EventHandlerType!.GetGenericArguments()[0];
+                var proxy = new MutationProxy(_ => handler(), wanted, argsType);
+                subscriber = Delegate.CreateDelegate(evt.EventHandlerType, proxy,
+                    typeof(MutationProxy).GetMethod(nameof(MutationProxy.Invoke))!);
+            }
+            else
+            {
+                // 保留旧代宿主兼容，仅订阅旧事件，不再反射触发宿主的事件字段。
+                evt = service.GetType().GetEvent("PhrasedEvent")
+                    ?? throw new MissingMemberException(service.GetType().FullName, "GalgameMutated/PhrasedEvent");
+                subscriber = handler;
+            }
+            evt.AddEventHandler(service, subscriber);
         }
-        catch
+        catch (Exception ex)
         {
-            LogHostReflectionFailure();
+            LogHostReflectionFailure(ex);
+        }
+
+        return () =>
+        {
+            LibraryChanged -= handler;
+            try
+            {
+                if (subscriber is not null) evt?.RemoveEventHandler(service, subscriber);
+            }
+            catch (Exception ex)
+            {
+                LogHostReflectionFailure(ex);
+            }
+        };
+    }
+
+    /// <summary>只通知插件页面，避免把插件保存伪装成宿主的 Added/Parser 事件。</summary>
+    public static void NotifyLibraryChanged()
+    {
+        if (LibraryChanged is not { } handlers) return;
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler();
+            }
+            catch
+            {
+                // 页面已销毁时不影响其它页面和批量结果。
+            }
         }
     }
 

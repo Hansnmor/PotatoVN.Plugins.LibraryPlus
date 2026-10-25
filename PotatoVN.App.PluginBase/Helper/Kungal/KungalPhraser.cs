@@ -756,7 +756,7 @@ public class KungalPhraser : IGalInfoPhraser
                 foreach (string? candName in new[] { candidate.Name, candidate.NameOriginal })
                 {
                     if (string.IsNullOrWhiteSpace(candName)) continue;
-                    if (IGalInfoPhraser.Similarity(candName, name!) >= 0.5 ||
+                    if (NameSimilarity(candName, name!) >= 0.5 ||
                         CharOverlap(candName, name!) >= 0.7)
                         return candidate.Id;
                 }
@@ -799,6 +799,37 @@ public class KungalPhraser : IGalInfoPhraser
         var setB = b.ToHashSet();
         int inter = setA.Count(setB.Contains);
         return setA.Count + setB.Count == 0 ? 0 : 2.0 * inter / (setA.Count + setB.Count);
+    }
+
+    /// <summary>保留旧宿主的名称相似度算法，避免绑定升级后已改签名的静态接口方法。</summary>
+    private static double NameSimilarity(string a, string b)
+    {
+        a = a.ToLower();
+        b = b.ToLower();
+        if (a.Length > b.Length) (a, b) = (b, a);
+        int n = a.Length, m = b.Length, range = Math.Max(m / 2 - 1, 0);
+        int matches = 0, swaps = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (a[i] == b[i])
+            {
+                matches++;
+                continue;
+            }
+            int matched = 0, swapped = 0;
+            for (int j = Math.Max(0, i - range); j < Math.Min(m, i + range + 1); j++)
+            {
+                if (i == j || a[i] != b[j]) continue;
+                matched = 1;
+                if (j < n && a[j] == b[i]) swapped = 1;
+                if (swapped == 1) break;
+            }
+            swaps += swapped;
+            matches += matched;
+        }
+        if (matches == 0) return 0;
+        return (matches / (double)n + matches / (double)m +
+                (matches - swaps / 2.0) / matches) / 3.0;
     }
 
     /// <summary>VNDB ID 归一化：去 v 前缀（"v17284" → "17284"）</summary>

@@ -91,13 +91,22 @@ public sealed partial class SortPage : Page
             Unloaded += (_, _) => Plugin.BatchStatusChanged -= OnBatchStatusChanged;
         }
 
-        // 搜刮信息完成后自动刷新列表（与原生页行为对齐，保留当前排序/筛选状态）
-        HostServices.SubscribePhrased(OnHostPhrased);
-        Unloaded += (_, _) => HostServices.UnsubscribePhrased(); // 页面销毁退订，防事件泄漏
+        // 以页面加载周期订阅，兼容页面重建及同一实例卸载后再次加载。
+        Action? unsubscribeChanges = null;
+        Loaded += (_, _) =>
+        {
+            unsubscribeChanges ??= HostServices.SubscribeLibraryChanges(OnLibraryChanged);
+            OnLibraryChanged();
+        };
+        Unloaded += (_, _) =>
+        {
+            unsubscribeChanges?.Invoke();
+            unsubscribeChanges = null;
+        };
     }
 
-    /// <summary>宿主搜刮完成事件：重新拉数据并刷新，保留排序/筛选/区间/分类状态</summary>
-    private void OnHostPhrased()
+    /// <summary>宿主变更或插件批量完成：重新拉数据，保留排序/筛选/区间/分类状态。</summary>
+    private void OnLibraryChanged()
     {
         Plugin.HostApi.InvokeOnMainThread(() =>
         {
@@ -1497,8 +1506,7 @@ public sealed partial class SortPage : Page
             try { BatchRatingButton.IsEnabled = true; } catch { } // 与「计算评分」互斥解除
             try { GameGridView.IsEnabled = true; GameGridView.Opacity = 1.0; } catch { }
             try { if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple) ExitMultiSelect(); } catch { } // 批量完成自动退出多选
-            try { OnHostPhrased(); } catch { } // 当前页面刷新（页面若已销毁则静默）
-            HostServices.TriggerPhrased(); // 触发宿主事件：主页/详情/重建后的扩展库页统一刷新
+            HostServices.NotifyLibraryChanged(); // 刷新当前扩展库页（包括批量期间重建的页面）
         }
 
         // 重复角色明细对话框（InfoBar 只有 10 秒且只有总数——具体游戏/角色在此列全）
@@ -1649,7 +1657,7 @@ public sealed partial class SortPage : Page
             try { BatchScrapeButton.IsEnabled = true; } catch { } // 与「更多搜刮」互斥解除
             try { GameGridView.IsEnabled = true; GameGridView.Opacity = 1.0; } catch { }
             try { if (GameGridView.SelectionMode == ListViewSelectionMode.Multiple) ExitMultiSelect(); } catch { } // 批量完成自动退出多选
-            try { OnHostPhrased(); } catch { } // 刷新列表（按加权评分排序立即生效）
+            HostServices.NotifyLibraryChanged(); // 按加权评分排序立即生效，也覆盖期间重建的页面
         }
 
         Plugin.HostApi.Info(InfoBarSeverity.Informational,
